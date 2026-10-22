@@ -23,6 +23,9 @@ variable "vpc_id" {
   type        = string
 }
 
+# Deliberately unused: kept as the documented reference to an SG that exists
+# in the account. See the description below.
+# tflint-ignore: terraform_unused_declarations
 variable "baseline_security_group_id" {
   description = <<-EOT
     acme-swe-prod-baseline-sg: empty ingress, egress TCP 443 and 80.
@@ -86,6 +89,10 @@ variable "arm_docker_ami_id" {
   default     = ""
 }
 
+# Deliberately unused: the fleet is entirely Graviton today. The variable is
+# the declared interface for the x86 lineage, which the image factory does
+# build. See the description below.
+# tflint-ignore: terraform_unused_declarations
 variable "x86_ami_id" {
   description = <<-EOT
     AMI of the x86_64 BASE lineage.
@@ -105,6 +112,8 @@ variable "x86_ami_id" {
   default     = ""
 }
 
+# Deliberately unused, for the same reason as x86_ami_id.
+# tflint-ignore: terraform_unused_declarations
 variable "x86_docker_ami_id" {
   description = <<-EOT
     AMI of the x86_64 CONTAINER HOST lineage.

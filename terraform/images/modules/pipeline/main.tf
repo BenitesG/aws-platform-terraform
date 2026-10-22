@@ -14,6 +14,24 @@
 # Execution stays in the CI pipeline.
 # ---------------------------------------------------------------------------
 
+# A CHILD module declares the constraint of the provider it uses, but never a
+# provider block: the configuration - region, profile, default_tags - is
+# inherited from the root. Without this declaration the module carries no
+# compatibility contract of its own, and the constraint that applies is
+# whatever the caller happens to have. It must match the root: a divergence
+# here fails at init, on the caller's side, with a message that names the
+# module and not the cause.
+terraform {
+  required_version = ">= 1.10"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
 resource "aws_imagebuilder_image_pipeline" "this" {
   name        = var.name
   description = var.description
