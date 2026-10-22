@@ -419,9 +419,6 @@ inventory.
 - **The tflint AWS ruleset** is not enabled; only the bundled `terraform`
   ruleset runs. The AWS plugin catches invalid instance types and malformed
   ARNs — exactly the class of error that today only appears at `apply`.
-- **The return route for the peering** exists on the other side, but which route
-  table holds it is unconfirmed. A main route table only applies to subnets
-  with no explicit association.
 - **Wide port ranges** on one host (400–1000/TCP) because of industrial
   protocol simulation. The risk is contained because the source is a single
   `/32` rather than a range — but narrowing it would reduce surface at no cost,
