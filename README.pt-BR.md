@@ -1,5 +1,7 @@
 # Plataforma AWS em Terraform — fábrica de golden images, EC2 e rede entre contas
 
+[![terraform-ci](https://github.com/BenitesG/aws-platform-terraform/actions/workflows/terraform-ci.yml/badge.svg)](https://github.com/BenitesG/aws-platform-terraform/actions/workflows/terraform-ci.yml)
+
 *[English version](README.md)*
 
 Infraestrutura de uma conta AWS de produção, escrita em código: pipeline de
@@ -16,6 +18,7 @@ caminho registrados dentro do próprio código.
 | **Módulos próprios** | 6 |
 | **Linhagens de golden image** | 4 — base e host de container, em x86 e ARM/Graviton |
 | **Componentes AWSTOE** | 3, escritos à mão em YAML |
+| **Máquinas EC2** | 6, todas Graviton, em dois ambientes |
 | **Exposição de rede** | sem IP público, sem porta 22; entrada vazia por padrão, exceção sempre em `/32` |
 | **Custo recorrente** | ~US$ 36/mês, com budget de US$ 150 |
 
@@ -43,6 +46,15 @@ conclusão anterior, baseada em raciocínio sem medição, estava incompleta.
 por linhagem de imagem, dimensionada para preservar rollback e derrubar o teto
 de snapshot de ~300 GB para ~200 GB. Sem ela o custo cresce em silêncio, sem
 alarme nenhum.
+
+**Uma esteira que não guarda credencial.** Todo push valida formatação,
+sintaxe, lint de linguagem e política como código nas quatro configurações —
+sem chave da AWS em secret, num repositório público onde um fork pode abrir
+pull request. Na primeira execução o tflint apontou doze achados e os doze
+eram reais: nenhum dos seis módulos filhos declarava a própria constraint de
+provider. Corrigido nos módulos, não silenciado na configuração. Com o
+checkov foi o contrário — nenhum dos 27 achados era defeito, então cada
+exceção está registrada com o motivo no `.checkov.yaml`.
 
 **Comentário que explica o porquê, não o quê.** Os `.tf` registram qual
 armadilha cada argumento evita e qual `apply` falhou antes. É o contexto que
@@ -73,7 +85,7 @@ normalmente morre num chat e que aqui fica onde alguém vai ler de novo.
   │                 └─► docker-host-arm64                                │
   │    + 4 lifecycle policies (COUNT=2, uma por linhagem)                │
   │                                                                      │
-  │  instances/            4 × t4g (Graviton), subnet privada            │
+  │  instances/            6 × t4g (Graviton), subnet privada            │
   │    sem IP público · sem key pair por padrão · IMDSv2 obrigatório      │
   │    um security group por máquina · acesso por Session Manager        │
   │                                                                      │
@@ -95,6 +107,7 @@ normalmente morre num chat e que aqui fica onde alguém vai ler de novo.
 **AWS provider** ~> 5.0 · **EC2 Image Builder** + componentes AWSTOE em YAML ·
 **EC2** Graviton · **IAM** com permissions boundary · **VPC peering** ·
 **VPC Flow Logs** em Parquet · **Session Manager** · **Python + duckdb** ·
+**GitHub Actions** com `fmt`, `validate`, **tflint** e **checkov** ·
 **Ubuntu 26.04 LTS**
 
 ---
@@ -352,9 +365,16 @@ inventário.
 - **Build agendada está desligada** de propósito, e continua assim até o
   tagueamento ser automático. Build que ninguém acompanha com retenção que não
   seleciona = snapshot de 20 GB acumulando em silêncio.
-- **Esteira de CI por OIDC** depende de `iam:CreateOpenIDConnectProvider`, que
-  ainda não foi liberado. Enquanto isso, nada de chave de acesso de longa
-  duração guardada em variável.
+- **`terraform plan` na esteira** depende de
+  `iam:CreateOpenIDConnectProvider`, que ainda não foi liberado. O CI que
+  existe hoje roda tudo o que não precisa de credencial — `fmt`, `validate`,
+  tflint e checkov nas quatro configurações. Falta a metade que lê o estado
+  real, e a alternativa — chave de acesso de longa duração num secret, em
+  repositório público onde um fork pode abrir pull request — é pior do que a
+  lacuna.
+- **O ruleset AWS do tflint** não está habilitado; roda só o ruleset
+  `terraform` embutido. O plugin da AWS pega tipo de instância inválido e ARN
+  malformado — exatamente a classe de erro que hoje só aparece no `apply`.
 - **A rota de volta do peering** existe do outro lado, mas falta confirmar em
   qual route table. Tabela main só vale para subnet sem associação explícita.
 - **Faixas de porta largas** numa das máquinas (400–1000/TCP) por causa de

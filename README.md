@@ -1,5 +1,7 @@
 # AWS platform in Terraform — golden image factory, EC2 and cross-account networking
 
+[![terraform-ci](https://github.com/BenitesG/aws-platform-terraform/actions/workflows/terraform-ci.yml/badge.svg)](https://github.com/BenitesG/aws-platform-terraform/actions/workflows/terraform-ci.yml)
+
 *[Versão em português](README.pt-BR.md)*
 
 Production infrastructure for an AWS account, as code: a golden image pipeline
@@ -42,6 +44,15 @@ earlier conclusion, reached by reasoning without measurement, was incomplete.
 **Cost treated as a requirement, not as an outcome.** A retention policy per
 image lineage, sized to preserve rollback while dropping the snapshot ceiling
 from ~300 GB to ~200 GB. Without it the cost grows silently, with no alarm.
+
+**A pipeline that holds no credentials.** Every push validates formatting,
+syntax, language lint and policy-as-code across the four configurations —
+with no AWS key in a secret, in a public repository where a fork can open a
+pull request. On the first run tflint produced twelve findings and all twelve
+were real: none of the six child modules declared a provider constraint of
+its own. Fixed in the modules, not silenced in the config. Checkov's 27
+findings went the other way — none were defects, so each exception is
+recorded with its reason in `.checkov.yaml`.
 
 **Comments that explain why, not what.** The `.tf` files record which trap each
 argument avoids and which `apply` failed before. It is the kind of context that
@@ -97,6 +108,7 @@ S3 gateway endpoint · Flow Logs in Parquet with a 25-field custom format
 **AWS provider** ~> 5.0 · **EC2 Image Builder** with AWSTOE components in YAML ·
 **EC2** Graviton · **IAM** under a permissions boundary · **VPC peering** ·
 **VPC Flow Logs** in Parquet · **Session Manager** · **Python + duckdb** ·
+**GitHub Actions** with `fmt`, `validate`, **tflint** and **checkov** ·
 **Ubuntu 26.04 LTS**
 
 ---
@@ -397,9 +409,16 @@ inventory.
 - **Scheduled builds are off** on purpose, and stay off until tagging is
   automatic. A build nobody watches, combined with retention that selects
   nothing, equals a 20 GB snapshot accumulating in silence.
-- **A CI pipeline over OIDC** depends on `iam:CreateOpenIDConnectProvider`,
-  which has not been granted yet. Until then, no long-lived access key stored
-  in a variable.
+- **`terraform plan` in the pipeline** depends on
+  `iam:CreateOpenIDConnectProvider`, which has not been granted yet. The CI
+  that exists today runs everything that needs no credentials — `fmt`,
+  `validate`, tflint and checkov across the four configurations. What is
+  missing is the half that reads the real state, and the alternative — a
+  long-lived access key in a secret, in a public repository where a fork can
+  open a pull request — is worse than the gap.
+- **The tflint AWS ruleset** is not enabled; only the bundled `terraform`
+  ruleset runs. The AWS plugin catches invalid instance types and malformed
+  ARNs — exactly the class of error that today only appears at `apply`.
 - **The return route for the peering** exists on the other side, but which route
   table holds it is unconfirmed. A main route table only applies to subnets
   with no explicit association.
