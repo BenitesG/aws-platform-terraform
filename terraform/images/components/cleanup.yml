@@ -1,0 +1,130 @@
+# Cleanup component. MUST BE THE LAST in the recipe.
+#
+# This is not a refinement - it is a correction. The classic mistake of the
+# first golden image is capturing the snapshot with the build machine's
+# identity inside. Result: EVERY instance created from the image is born with
+# the same values.
+#
+#   - identical SSH host keys: the "host key changed" warning stops meaning
+#     anything and opens room for man-in-the-middle between the machines
+#   - duplicate machine-id: breaks journald and tools that identify the machine
+#     by it
+#   - populated cloud-init state: the new instance does not run the first-boot
+#     initialization
+#
+# We also take the chance to pin the SSH port.
+
+name: cleanup
+description: Sets the SSH port and cleans identity and residue before the snapshot
+schemaVersion: 1.0
+
+phases:
+  - name: build
+    steps:
+
+      # SSH port at 65022.
+      #
+      # This changes only WHERE THE SERVER LISTENS. Connections that LEAVE the
+      # machine (git to the CI pipeline, for example) keep going to port 22 of
+      # the destination - the two things are independent.
+      #
+      # 65022 is above the Linux ephemeral range (32768-60999), so there is no
+      # risk of colliding with a connection's source port.
+      #
+      # The benefit today is zero: the instances have no public IP and no
+      # inbound rule, and Session Manager does not use SSH. The gain shows up
+      # if some server ends up exposed. ATTENTION: if there is ever an inbound
+      # rule, the security group must allow 65022, not 22. And whoever uses the
+      # SSM SSH tunnel (AWS-StartSSHSession) needs to know the port.
+      #
+      # TWO PLACES, and this is not redundancy:
+      #
+      # 1) sshd_config.d - applies when sshd runs as a traditional service
+      #
+      # 2) ssh.socket override - STARTING WITH UBUNTU 24.04 SSH uses SOCKET
+      #    ACTIVATION, and in that mode the "Port" in sshd_config is IGNORED:
+      #    the port is decided by the systemd unit's ListenStream. Without this
+      #    override the build would pass and SSH would stay on 22, with no error
+      #    at all - a silent failure.
+      #
+      # The empty "ListenStream=" before the new value is not an oversight: it
+      # is the systemd idiom to CLEAR the inherited list before appending.
+      # Without it, the unit would listen on both ports.
+      - name: SshPort
+        action: ExecuteBash
+        inputs:
+          commands:
+            - install -d -m 0755 /etc/ssh/sshd_config.d
+            - printf 'Port 65022\n' > /etc/ssh/sshd_config.d/10-acme-port.conf
+            - install -d -m 0755 /etc/systemd/system/ssh.socket.d
+            - printf '[Socket]\nListenStream=\nListenStream=65022\n' > /etc/systemd/system/ssh.socket.d/10-acme-port.conf
+            - systemctl daemon-reload
+
+      # SSH diagnostics, NON-BLOCKING.
+      #
+      # History: version 1.0.0 used "sshd -t" and failed with 255. I assumed it
+      # was OpenSSH's requirement for an absolute path and fixed it to
+      # "/usr/sbin/sshd -t" in 1.0.1 - which failed with 255 just the same. The
+      # hypothesis was wrong, or incomplete.
+      #
+      # Instead of spending more builds guessing, the commands below PRINT the
+      # diagnostics to the build log without bringing anything down. They all
+      # end in "|| true", because in ExecuteBash any command with a non-zero
+      # exit fails the whole step.
+      #
+      # Validating syntax here was zeal, not necessity: the file written has
+      # one line. If validation is desired, the right place is the TEST phase,
+      # which runs on an instance launched from the finished AMI.
+      - name: DiagnoseSshd
+        action: ExecuteBash
+        inputs:
+          commands:
+            - echo "=== binary ==="
+            - ls -l /usr/sbin/sshd || true
+            - echo "=== version ==="
+            - /usr/sbin/sshd -V 2>&1 || true
+            - echo "=== syntax test (expected exit 0) ==="
+            - /usr/sbin/sshd -t 2>&1 || true
+            - echo "=== exit code of the test ==="
+            - /usr/sbin/sshd -t > /dev/null 2>&1; echo "exit=$?"
+            - echo "=== host keys present ==="
+            - ls -l /etc/ssh/ssh_host_* 2>&1 || true
+            - echo "=== socket activation ==="
+            - systemctl is-enabled ssh.socket 2>&1 || true
+            - systemctl is-enabled ssh.service 2>&1 || true
+            - echo "=== effective port ==="
+            - /usr/sbin/sshd -T 2>/dev/null | grep -i '^port' || true
+
+      # Removes the host keys. cloud-init regenerates them on the first boot of
+      # each instance, giving each machine a unique identity.
+      - name: RemoveSshHostKeys
+        action: ExecuteBash
+        inputs:
+          commands:
+            - rm -f /etc/ssh/ssh_host_*
+
+      # Zeroes (does not delete) the machine-id. An empty file makes systemd
+      # generate a new one on boot; a missing file causes an error in some
+      # versions.
+      - name: ResetMachineId
+        action: ExecuteBash
+        inputs:
+          commands:
+            - truncate -s 0 /etc/machine-id
+            - rm -f /var/lib/dbus/machine-id
+
+      # Makes cloud-init run from scratch on the next instance.
+      - name: CleanCloudInit
+        action: ExecuteBash
+        inputs:
+          commands:
+            - cloud-init clean --logs --seed
+
+      - name: CleanAptAndLogs
+        action: ExecuteBash
+        inputs:
+          commands:
+            - apt-get clean
+            - rm -rf /var/lib/apt/lists/*
+            - find /var/log -type f -exec truncate -s 0 {} +
+            - rm -f /root/.bash_history /home/ubuntu/.bash_history

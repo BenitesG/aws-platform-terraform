@@ -1,0 +1,296 @@
+# Docker Engine component.
+#
+# Docker does NOT go into the base image, on purpose: the daemon runs as root,
+# and belonging to the "docker" group is equivalent to being root - you can
+# mount the host filesystem inside a container. Separate recipe, stacked on top
+# of the base.
+#
+# ---------------------------------------------------------------------------
+# THE CORE OF THIS COMPONENT IS THE LOG LIMIT, NOT THE NETWORK
+# ---------------------------------------------------------------------------
+#
+# log-opts with max-size 10m and max-file 3 is what has practical value here:
+# without a limit, a container that logs a lot fills the 20 GB root disk and
+# brings the machine down. The symptom is "the server stopped", with no obvious
+# cause - and it is MUCH more likely than any network range collision.
+#
+# live-restore keeps containers running when the daemon restarts.
+#
+# THE ADDRESS POOL WAS LEFT AT THE DOCKER DEFAULT. Version 1.0.0 pinned
+# 10.100.0.0/16 and 10.101.0.0/16; it was reverted on 2026-10-15 because the
+# justification was wrong - details in the note at the end of this file.
+#
+# The validate phase does NOT trust the configuration: it checks that the
+# daemon actually READ the daemon.json. That is the difference between "we
+# configured it" and "it is in effect", and it is what caught a real bug in the
+# order of the steps.
+
+name: docker
+description: Docker Engine with log limit and live-restore
+schemaVersion: 1.0
+
+phases:
+  - name: build
+    steps:
+
+      # Distribution packages that conflict with the official docker-ce.
+      # The "|| true" exists because apt-get remove of an absent package exits
+      # with a non-zero code, and in ExecuteBash that fails the whole step.
+      - name: RemoveConflicts
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
+                apt-get remove -y "$pkg" 2>/dev/null || true
+              done
+
+      - name: InstallPrereqs
+        action: ExecuteBash
+        inputs:
+          commands:
+            - apt-get update -y
+            - apt-get install -y ca-certificates curl gnupg
+            - install -d -m 0755 /etc/apt/keyrings
+            - install -d -m 0755 /etc/docker
+
+      # ORDER: the daemon.json is written BEFORE installing docker-ce.
+      #
+      # WHY: "apt install docker-ce" ALREADY STARTS THE DAEMON. By writing it
+      # first, the initial startup already reads the configuration and no
+      # restart is needed.
+      #
+      # This also avoids a class of error: configuration that only applies to
+      # resources created AFTER it takes effect does not apply to what the
+      # daemon already created. That is what brought down build 1.0.0/1, when
+      # this component still pinned default-address-pools - see the note at the
+      # end.
+      #
+      # log-opts limits the container log. It is the field that matters most
+      # here: without it, a container that logs a lot fills the 20 GB root disk
+      # and brings the machine down, with the symptom "the server stopped" and
+      # no obvious cause.
+      #
+      # live-restore keeps containers running when the daemon restarts - useful
+      # on a container host, and harmless (it is only incompatible with swarm
+      # mode, which we do not use).
+      - name: ConfigureDaemon
+        action: CreateFile
+        inputs:
+          - path: /etc/docker/daemon.json
+            overwrite: true
+            content: |
+              {
+                "log-driver": "json-file",
+                "log-opts": {
+                  "max-size": "10m",
+                  "max-file": "3"
+                },
+                "live-restore": true
+              }
+
+      # GPG key and repository, with CODENAME DETECTION AND FALLBACK.
+      #
+      # Why in a single step: each ExecuteBash runs in its own shell, so a
+      # variable defined in one step does not survive into the next.
+      #
+      # The risk is real: THIRD-PARTY repositories often take months to publish
+      # a package for a new LTS codename. Ubuntu 26.04 is "resolute". If Docker
+      # does not yet have a channel for it, falling back to "noble" (24.04 LTS)
+      # is the standard workaround - the package is compatible, and the
+      # alternative would be the whole build failing.
+      #
+      # The effective codename ends up in the log, so you can tell afterwards
+      # whether the image used resolute or the fallback.
+      - name: AddDockerRepository
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              set -eu
+              . /etc/os-release
+              CODENAME="${UBUNTU_CODENAME:-}"
+              if [ -z "$CODENAME" ]; then
+                CODENAME="$(lsb_release -cs)"
+              fi
+              echo "OS codename: ${CODENAME}"
+
+              if curl -fsI "https://download.docker.com/linux/ubuntu/dists/${CODENAME}/Release" >/dev/null 2>&1; then
+                echo "Docker channel for ${CODENAME}: exists"
+              else
+                echo "WARNING: Docker has not yet published a channel for ${CODENAME}."
+                echo "WARNING: using the noble (24.04 LTS) channel as a workaround."
+                CODENAME="noble"
+              fi
+              echo "effective repository codename: ${CODENAME}"
+
+              curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+                | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+              chmod a+r /etc/apt/keyrings/docker.gpg
+
+              printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu %s stable\n' \
+                "$(dpkg --print-architecture)" "$CODENAME" \
+                > /etc/apt/sources.list.d/docker.list
+
+              cat /etc/apt/sources.list.d/docker.list
+
+      - name: InstallDocker
+        action: ExecuteBash
+        inputs:
+          commands:
+            - apt-get update -y
+            - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+      # The daemon.json WAS ALREADY WRITTEN before the installation - see the
+      # note in ConfigureDaemon. Here we only ensure the service is enabled to
+      # come up on boot of the final instance.
+      #
+      # There is no "restart" because it is not needed: the daemon came up for
+      # the first time already reading the correct configuration.
+      - name: EnableDocker
+        action: ExecuteBash
+        inputs:
+          commands:
+            - systemctl enable docker
+            - systemctl is-active docker
+
+      # We do NOT add anyone to the "docker" group here, and that is
+      # deliberate.
+      #
+      # Belonging to the docker group is equivalent to being root on the
+      # machine. Whoever needs to use Docker comes in through Session Manager,
+      # where the ssm-user already has sudo. Putting a user in the group in the
+      # IMAGE would grant that power to every instance created from it, forever,
+      # with no case-by-case decision.
+
+  # -------------------------------------------------------------------------
+  # validate: runs on the BUILD instance, before taking the AMI.
+  # Failing here prevents the AMI from existing, which is what we want.
+  # -------------------------------------------------------------------------
+  - name: validate
+    steps:
+      - name: ValidateDockerInstalled
+        action: ExecuteBash
+        inputs:
+          commands:
+            - docker --version
+            - docker compose version
+            - systemctl is-active docker
+            - systemctl is-enabled docker
+
+      - name: ValidateDaemonConfig
+        action: ExecuteBash
+        inputs:
+          commands:
+            - cat /etc/docker/daemon.json
+
+      # THE CHECK THAT MATTERS: did the daemon.json TAKE EFFECT?
+      #
+      # It is not enough for the file to be written - the "cat" of the previous
+      # step would prove only that. The daemon must have READ and applied it.
+      #
+      # It was this distinction that caught the bug in build 1.0.0/1: the file
+      # was correct on disk and the configuration was not in effect, because
+      # the daemon had come up before it existed.
+      #
+      # ONE CHECK ONLY, ON PURPOSE. "Live Restore Enabled: true" only shows up
+      # if it came from the daemon.json - the Docker default is false. If the
+      # daemon read the file, it read the log-opts too: they are in the same
+      # file.
+      #
+      # Version 1.0.1 had a second step that started a container and read the
+      # LogConfig with "grep -A3". The 3-line window cut off before the
+      # max-size, and build 1.0.1/1 WAS REJECTED by mistake - the configuration
+      # was correct. A complicated checker becomes a source of failure instead
+      # of a detector. Removed.
+      - name: ValidateDaemonTookEffect
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              set -eu
+
+              if ! docker info 2>/dev/null | grep -q 'Live Restore Enabled: true'; then
+                echo "ERROR: the daemon does not have live-restore active."
+                echo "ERROR: the /etc/docker/daemon.json did not take effect."
+                echo "ERROR: likely cause - the daemon came up before the file existed."
+                echo "--- docker info ---"
+                docker info 2>&1 || true
+                exit 1
+              fi
+              echo "OK: live-restore active - the daemon.json was read and applied."
+
+              # Informational, non-blocking: records the docker0 range for
+              # whoever may diagnose routing on this instance one day. With the
+              # Docker DEFAULT pool, the expected value is 172.17.0.0/16.
+              echo "INFO: docker0 network: $(docker network inspect bridge | grep '"Subnet"' | head -1 | cut -d'"' -f4)"
+
+  # -------------------------------------------------------------------------
+  # test: runs on an instance launched from the FINISHED AMI.
+  # It is what distinguishes "image created" from "image that provably works".
+  # -------------------------------------------------------------------------
+  - name: test
+    steps:
+      # Requires egress on 443 for the registry. The build security group
+      # allows 443 and 80, and egress exists through the NAT.
+      - name: TestRunContainer
+        action: ExecuteBash
+        inputs:
+          commands:
+            - docker run --rm hello-world
+            - docker run --rm alpine echo "Docker working on the AMI"
+
+      # Repeats the check on the final AMI. The daemon.json could have been
+      # right on the build and not survived the snapshot.
+      - name: TestDaemonConfigOnAmi
+        action: ExecuteBash
+        inputs:
+          commands:
+            - |
+              set -eu
+              if ! docker info 2>/dev/null | grep -q 'Live Restore Enabled: true'; then
+                echo "ERROR: the final AMI does not have live-restore active."
+                echo "ERROR: the daemon.json did not survive the snapshot."
+                exit 1
+              fi
+              echo "OK: daemon.json in effect on the final AMI."
+              echo "INFO: docker0 network: $(docker network inspect bridge | grep '"Subnet"' | head -1 | cut -d'"' -f4)"
+
+# ---------------------------------------------------------------------------
+# DECISION: the address pool was left at the Docker DEFAULT (2026-10-15)
+#
+# Version 1.0.0 of this component pinned default-address-pools at 10.100.0.0/16
+# and 10.101.0.0/16. It was REVERTED, and it is worth recording why - the
+# original justification was wrong.
+#
+# WHAT WAS CLAIMED: the Docker default pool collides with the production VPC.
+#
+# WHY THAT IS WRONG: Docker allocates starting from 172.17.0.0/16 and goes up -
+# 172.18, 172.19 ... up to 172.31 - and then moves on to 192.168.0.0/20 and
+# beyond. Production is 172.16.0.0/16, which is NOT on the allocation path.
+# Zero risk, not "intermittent".
+#
+# THE COLLISIONS THAT DO EXIST, and why they do not justify it:
+#   172.31.0.0/16 (in use) requires 15 networks created first
+#   the office 192.168.x ranges require more than 15
+# Each docker-compose project creates a network. Reaching 15 simultaneous
+# networks means dozens of stacks on the same host, which is not the case here.
+#
+# And the failure mechanism is not what intuition suggests: traffic LEAVING the
+# container goes through MASQUERADE and reaches the destination with the host's
+# IP, so the container's IP never appears on the network. The problem would be
+# at the DESTINATION - a local route "172.x dev docker0" is more specific than
+# the VPC route and would capture traffic that should leave via eth0. But that
+# requires the overlap to happen, and the overlap requires the 15 networks.
+#
+# WHAT TIPPED THE DECISION TO GO BACK TO THE DEFAULT: fewer pieces to maintain,
+# and diverging from the default has its own cost - whoever debugs routing
+# expects 172.17 and is thrown off by anything else.
+#
+# IF YOU EVER NEED TO PIN AGAIN: the legitimate reason would be an instance
+# needing to REACH an office 192.168.x range (today the flow is the opposite,
+# office -> ALB -> instance) or a new peering with a VPC in 172.17-172.31. In
+# that case, write the daemon.json BEFORE the apt install, because
+# default-address-pools does not apply to the bridge network the daemon already
+# created.
+# ---------------------------------------------------------------------------
