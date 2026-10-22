@@ -1,0 +1,133 @@
+# ---------------------------------------------------------------------------
+# .github/workflows/terraform-ci.yml
+#
+# Static validation of every push. No AWS credentials, by design.
+#
+# THE DECISION THAT SHAPES THIS FILE: a pipeline that touches the account
+# needs a role via OIDC, and the permission to create the OIDC provider has
+# not been granted (see "What is still open" in the README). The alternative
+# would be a long-lived access key in a repository secret - in a PUBLIC
+# repository, where any fork opening a pull request runs workflow code. So
+# this pipeline does everything that can be verified WITHOUT credentials,
+# which is more than it sounds: formatting, syntax, internal consistency,
+# language lint and policy-as-code.
+#
+# What it cannot do without credentials is `terraform plan` - plan reads the
+# real state and the real resources. That is the gap, and it is named instead
+# of hidden.
+#
+# `permissions: contents: read` is explicit because the default for a
+# repository can be read-write, and a workflow that only reads code should
+# not hold a token able to push to it.
+# ---------------------------------------------------------------------------
+
+name: terraform-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  TERRAFORM_VERSION: 1.16.6
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Formatting. Separate job because it is the cheapest check in the pipeline
+  # and it fails for a reason that takes one command to fix.
+  # -------------------------------------------------------------------------
+  fmt:
+    name: terraform fmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          # The wrapper intercepts stdout to expose it as an output. It is not
+          # needed here and it mangles the diff that -diff prints.
+          terraform_wrapper: false
+
+      - name: terraform fmt -check -recursive
+        run: terraform fmt -check -recursive -diff
+
+  # -------------------------------------------------------------------------
+  # Syntax and internal consistency, per configuration.
+  #
+  # `-backend=false` is what makes this run with no credentials: init
+  # downloads the provider but does not touch the S3 backend. validate needs
+  # the provider schema to resolve resource types - without init it fails for
+  # the wrong reason.
+  #
+  # fail-fast: false because knowing that THREE of the four configurations
+  # broke is different information from knowing that one did.
+  # -------------------------------------------------------------------------
+  validate:
+    name: terraform validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [bootstrap, images, instances, network-peering]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform init (no backend)
+        working-directory: terraform/${{ matrix.config }}
+        run: terraform init -backend=false -input=false
+
+      - name: terraform validate
+        working-directory: terraform/${{ matrix.config }}
+        run: terraform validate -no-color
+
+  # -------------------------------------------------------------------------
+  # Lint of the Terraform language, including the local modules.
+  # Configuration and the reasoning behind it: .tflint.hcl
+  # -------------------------------------------------------------------------
+  tflint:
+    name: tflint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.64.0
+
+      - name: tflint --recursive
+        run: tflint --chdir=terraform --recursive --config "${GITHUB_WORKSPACE}/.tflint.hcl" --format compact
+
+  # -------------------------------------------------------------------------
+  # Policy-as-code. The exceptions, and the reason for each one, are in
+  # .checkov.yaml - not in flags on this line.
+  #
+  # Installed with pip and pinned, instead of the official action: the action
+  # pulls a container image and adds a layer whose version is harder to see
+  # from here.
+  # -------------------------------------------------------------------------
+  checkov:
+    name: checkov
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: install checkov
+        run: pip install checkov==3.3.30
+
+      - name: checkov
+        run: checkov --config-file .checkov.yaml --directory terraform --framework terraform --compact

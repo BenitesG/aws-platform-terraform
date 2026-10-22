@@ -1,0 +1,76 @@
+# ---------------------------------------------------------------------------
+# .checkov.yaml
+#
+# Policy-as-code scan of the Terraform, run on every push by the CI.
+# Baseline on the first run: 262 passed, 27 failed.
+#
+# None of the 27 were defects, and that is the point of this file. A scanner
+# applied to a real account always produces findings that are correct in
+# general and wrong here. The honest options are to fix, to suppress WITH A
+# REASON, or to leave the pipeline red forever until everyone stops reading
+# it. The third one is the only one that is not a decision.
+#
+# The exceptions live here, centralized, instead of as 27 inline comments
+# spread across the code: the reason is the same for every occurrence, and
+# repeating it per resource would make it drift.
+# ---------------------------------------------------------------------------
+
+skip-check:
+  # --- Customer managed KMS keys (CMK) -------------------------------------
+  # CKV_AWS_145: S3 encrypted with CMK instead of SSE-S3
+  # CKV_AWS_180: Image Builder component encrypted with CMK
+  # CKV_AWS_199: distribution configuration encrypting the AMI with CMK
+  # CKV_AWS_200: image recipe EBS volume encrypted with CMK
+  #
+  # Everything here is already encrypted at rest - with the AWS managed key.
+  # A CMK adds US$ 1/month per key plus request charges, and above all adds a
+  # key to MANAGE: rotation, grants, and a key policy that, if wrong, locks
+  # the resource out of its own account. The gain a CMK brings is control over
+  # who can decrypt INDEPENDENTLY of the resource policy, which matters when
+  # sharing across accounts or meeting a requirement that demands a key under
+  # your own control. Neither applies to a single-account state bucket or to
+  # AMIs that are not shared. Revisit if the images start being distributed to
+  # other accounts - there a CMK stops being ceremony and becomes the
+  # mechanism.
+  - CKV_AWS_145
+  - CKV_AWS_180
+  - CKV_AWS_199
+  - CKV_AWS_200
+
+  # --- EC2 ----------------------------------------------------------------
+  # CKV_AWS_126: detailed monitoring (1-minute metrics instead of 5)
+  # Costs ~US$ 2.10/month per instance - six instances is US$ 12.60/month on
+  # a US$ 150 budget, for granularity nobody consumes: there is no alarm and
+  # no dashboard reading these metrics today. Enabling it would be paying for
+  # resolution without a consumer. It becomes justified alongside the alarm
+  # that needs it, not before.
+  - CKV_AWS_126
+
+  # CKV_AWS_135: ebs_optimized = true
+  # A false positive on this fleet. Every t4g is Nitro, where EBS
+  # optimization is enabled by default and cannot be disabled; the attribute
+  # is absent from the code because it has no effect. The check reads the
+  # absence of the argument, not the instance family.
+  - CKV_AWS_135
+
+  # --- State bucket -------------------------------------------------------
+  # CKV_AWS_18: S3 access logging
+  # Logging a bucket requires a SECOND bucket to receive the logs - which
+  # will raise the same finding, and so on. For a state bucket the relevant
+  # audit trail is who called S3, and that is in CloudTrail (data events),
+  # not in the access log. Versioning is on, so a wrong write is recoverable.
+  - CKV_AWS_18
+
+  # CKV_AWS_144: cross-region replication
+  # The state describes resources in a single region. If the region is lost,
+  # the state is the least of the problems - and a replica of the state
+  # without the infrastructure it describes rebuilds nothing. The
+  # consequences of this boundary are in docs/network-built-in-console.md.
+  - CKV_AWS_144
+
+  # CKV2_AWS_62: S3 event notifications
+  # The check expects a bucket whose writes trigger processing. This one
+  # stores Terraform state: there is no consumer to notify, and a
+  # notification per apply would be noise with a destination that does not
+  # exist.
+  - CKV2_AWS_62
