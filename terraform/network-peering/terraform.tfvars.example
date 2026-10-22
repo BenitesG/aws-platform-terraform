@@ -1,0 +1,47 @@
+# ---------------------------------------------------------------------------
+# network-peering/terraform.tfvars.example
+#
+# Copy to terraform.tfvars and fill it in. The real file does NOT go to git.
+# ---------------------------------------------------------------------------
+
+aws_profile = "acme-swe-prod"
+region      = "us-west-2"
+
+# --- our side ---
+# acme-swe-prod-vpc, 10.20.0.0/16
+vpc_id = "vpc-xxxxxxxxxxxxxxxxx"
+# acme-swe-prod-rt-private: the table associated with the private subnets.
+# Do NOT use rt-main, which is left with only "local" on purpose, so that
+# "forgetting to associate" fails safely.
+private_route_table_id = "rtb-xxxxxxxxxxxxxxxxx"
+
+# --- production side ---
+# 12 digits, WITHOUT hyphens. The console shows them with hyphens; the API
+# does not accept them.
+production_account_id = "000000000000"
+production_vpc_id     = "vpc-xxxxxxxxxxxxxxxxx"
+# It must NOT overlap 10.20.0.0/16 - AWS refuses the peering.
+#
+# CHECK the CIDR at the source after acceptance (AccepterVpcInfo.CidrBlock):
+# while the connection is pending-acceptance AWS returns null in that field.
+# A CIDR passed along and never verified was the root cause of the most
+# expensive error of the day - see the README, section "The CIDR was wrong".
+production_vpc_cidr = "172.16.0.0/16"
+
+common_tags = {
+  ManagedBy = "terraform"
+
+  # Project/Application specific to THIS directory, different from the others.
+  # The Application tag describes WHAT the resource is, not the project: in
+  # images/ it is golden-image, in bootstrap/ it is terraform-state, here it is
+  # network-traffic.
+  "acme:cost-allocation:Project"     = "infrastructure"
+  "acme:cost-allocation:Application" = "network-traffic"
+  "acme:cost-allocation:Department"  = "swe"
+  "acme:cost-allocation:CostCenter"  = "cc-infra-1000"
+  "acme:automation:Environment"      = "prod"
+  "acme:data:DataClassification"     = "internal"
+
+  Owner      = "plataforma@example.com"
+  ChargeType = "dedicated"
+}
