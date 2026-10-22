@@ -1,0 +1,116 @@
+# ---------------------------------------------------------------------------
+# images/terraform.tfvars.example
+#
+# Copy to terraform.tfvars and fill in the values for your account. The real
+# file (terraform.tfvars) is in .gitignore and does NOT go to git.
+#
+# All the placeholders below use documentation/example ranges. Replace them
+# with the real IDs of your environment before the first apply.
+# ---------------------------------------------------------------------------
+
+# AWS CLI profile (SSO).
+#
+# Must be the DelegatedAdministrator, NOT PowerUserAccess: this directory
+# creates a role and an instance profile, and PowerUser has neither
+# iam:GetRole nor iam:GetInstanceProfile. Without those READS the apply fails
+# after creating the resource, leaving an orphan object outside the state.
+aws_profile = "acme-swe-prod-admin"
+
+# Region where the image is built and distributed.
+region = "us-west-2"
+
+# Ubuntu LTS version used as the parent image.
+#
+# USE ONLY LTS. The interim releases (24.10, 25.04, 25.10) have 9 months of
+# support and are not fit for a server. 26.04 (resolute) has support until
+# 2031.
+ubuntu_version = "26.04"
+
+# Architecture of the base image: amd64 (x86_64, t3a instances) or arm64
+# (Graviton, t4g instances). The architecture is BAKED INTO THE AMI: an amd64
+# image does not run on t4g and arm64 does not run on t3a. Default: amd64.
+architecture = "amd64"
+
+# Type of the temporary amd64 build instance. Must match the architecture
+# above.
+build_instance_type = "t3a.small"
+
+# Build instance type for the ARM64 images. MUST be a Graviton family (t4g,
+# m6g, c7g): the build instance runs the parent image, and the architecture is
+# baked into the AMI.
+build_instance_type_arm64 = "t4g.small"
+
+# VPC where the build instance security group is created.
+vpc_id = "vpc-0aaaa1111bbbb2222"
+
+# Subnet of the temporary build instance.
+#
+# MUST be PRIVATE with egress through the internet (NAT): the build uses SSM
+# and downloads packages over an OUTBOUND connection. A public subnet in this
+# account has no useful egress route for the purpose.
+build_subnet_id = "subnet-0cccc3333dddd4444"
+
+# ARN of the permissions boundary required for roles created by delegation.
+# Every role created by delegation must carry it, otherwise the CreateRole is
+# denied with an error that does not mention the boundary.
+permissions_boundary_arn = "arn:aws:iam::111122223333:policy/DelegatedAdminBoundary"
+
+# Size of the amd64 base image's root disk, in GB. The IMAGE disk is the
+# minimum disk size of the instance: you cannot launch an instance with a disk
+# smaller than the AMI's, only larger.
+root_volume_size = 20
+
+# Size of the ARM64 images' root disk, in GB. Separate because the ARM lineage
+# asked for 30 GB.
+arm64_root_volume_size = 30
+
+# ---------------------------------------------------------------------------
+# Parent AMIs of the base lineages, PINNED on purpose.
+#
+# These are the values the recipes use TODAY - not the ones Canonical
+# publishes now. The public SSM parameter points to "the current one" and
+# changes on its own; since parent_image is ForceNew in a recipe, a dynamic
+# value would make Terraform want to REPLACE the recipes on every
+# republication - and the replacement would fail, because there are images
+# referencing them.
+#
+# TO UPDATE: run "terraform output" and compare *_em_uso with *_disponivel.
+# Changing it here REPLACES the recipe, so bump the recipe_version along with
+# it in images.tf and first delete the images that block the removal.
+# ---------------------------------------------------------------------------
+base_parent_ami_amd64 = "ami-0a11111111111111a"
+base_parent_ami_arm64 = "ami-0b22222222222222b"
+
+# ---------------------------------------------------------------------------
+# Parent AMIs of the CONTAINER HOST lineages - our own bases.
+#
+# YOU CANNOT STACK ACROSS ARCHITECTURES: each container host starts from the
+# base of its OWN architecture. An x86 image does not boot on t4g.
+#
+# PINNED ON PURPOSE: they do not follow new base builds on their own. Changing
+# any of them REPLACES the corresponding recipe (parent_image is ForceNew) and
+# forces bumping the recipe_version along with it in images.tf.
+# ---------------------------------------------------------------------------
+base_ami_id       = "ami-0c33333333333333c"
+base_arm64_ami_id = "ami-0d44444444444444d"
+
+# ---------------------------------------------------------------------------
+# Standard tags, applied via default_tags to all the provider's resources.
+#
+# A key with a colon MUST be quoted in HCL.
+# Fill in the empty fields according to your organization's internal tagging
+# standard (Project, Department, CostCenter, Owner, etc.).
+# ---------------------------------------------------------------------------
+common_tags = {
+  ManagedBy = "terraform"
+
+  "acme:cost-allocation:Project"     = "best-practices"
+  "acme:cost-allocation:Application" = "golden-image"
+  "acme:cost-allocation:Department"  = "swe"
+  "acme:cost-allocation:CostCenter"  = "cc-infra-1000"
+  "acme:automation:Environment"      = "prod"
+  "acme:data:DataClassification"     = "internal"
+
+  Owner      = "plataforma@example.com"
+  ChargeType = "dedicated"
+}
