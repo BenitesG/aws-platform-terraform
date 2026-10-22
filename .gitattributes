@@ -1,0 +1,54 @@
+# ---------------------------------------------------------------------------
+# .gitattributes
+#
+# This file lives at the ROOT of the repository because the rules apply to the
+# whole tree - both terraform/ and tools/. In particular, it must keep covering
+# the Image Builder components in terraform/images/components/*.yml, whose
+# content is read by file() and becomes a resource attribute (see below).
+#
+# WHY THIS FILE EXISTS - incident of 2026-10-16.
+#
+# The rebase of the first push rewrote the working tree, and
+# core.autocrlf = true (Git's default on Windows) converted the components'
+# YAML from LF to CRLF.
+#
+# Terraform reads those files with file() and dumps the content into the
+# "data" attribute of aws_imagebuilder_component. In a component EVERY argument
+# is ForceNew, so the byte change turned into a REPLACEMENT - and it cascaded:
+# a replaced component changes the ARN, the ARN is part of the recipe, so the
+# three recipes changed too. The plan went from "No changes" to:
+#
+#   Plan: 9 to add, 5 to change, 6 to destroy
+#
+# Applying that would fail midway: the three AMIs reference the recipes, and
+# removing a referenced recipe returns ResourceDependencyException. With
+# create_before_destroy the removal comes last, so the apply would leave a new
+# resource created and the old one stuck, in a partial state.
+#
+# THE WORST DETAIL: "git status" showed the tree CLEAN. Git normalizes line
+# endings when comparing, so it does not see a difference - and Terraform does.
+# Two tools reading the same file and disagreeing about the content.
+#
+# THE GENERAL RULE: a file whose CONTENT becomes a resource attribute cannot
+# depend on a machine's checkout configuration. Here the risk class is exactly
+# that of files read by file() or templatefile().
+# ---------------------------------------------------------------------------
+
+# Image Builder components (terraform/images/components/*.yml): the content
+# goes into the "data" attribute.
+# eol=lf guarantees LF in the working tree on any system, regardless of the
+# core.autocrlf of whoever clones.
+*.yml  text eol=lf
+*.yaml text eol=lf
+
+# The .tf files are not read by file(), so CRLF in them does not replace a
+# resource. Even so they stay in LF for consistency: it avoids noise diffs
+# between whoever runs on Windows and the pipeline's Linux runner.
+*.tf       text eol=lf
+*.hcl      text eol=lf
+*.md       text eol=lf
+*.sql      text eol=lf
+*.tfvars   text eol=lf
+
+# Automatic detection for the rest, without forcing conversion on binaries.
+* text=auto

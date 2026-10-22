@@ -1,0 +1,38 @@
+# Plugins and modules directory downloaded by terraform init
+.terraform/
+
+# The .terraform.lock.hcl does NOT belong here: it MUST be versioned.
+# It has nothing sensitive - only the provider name, the installed version,
+# the constraint declared in the code and checksums. And it is what guarantees
+# everyone uses the same version: provider.tf declares "~> 5.0", which accepts
+# any 5.x, so without the lock each machine may install a different version.
+# The checksums also make init fail if the package in the registry is altered.
+#
+# The hashes are PER PLATFORM. Before the CI pipeline exists, generate both:
+#   terraform providers lock -platform=windows_amd64 -platform=linux_amd64
+
+# State: NEVER version. It lives in the S3 bucket.
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Variables: may contain sensitive values
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# Plan output saved to a file
+*.tfplan
+
+# Terraform crash logs
+crash.log
+crash.*.log
+
+# Python (tooling under tools/)
+__pycache__/
+*.pyc
+
+# Flow log evidence under tools/flowlog/ contains real IPs: never version it.
+# The exception is the synthetic sample CSV, which stays in the repository.
+evidence-*.csv
+!example-evidence.csv
