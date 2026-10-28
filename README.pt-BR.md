@@ -14,11 +14,11 @@ caminho registrados dentro do próprio código.
 
 |  |  |
 |---|---|
-| **Configurações Terraform** | 4, com estado isolado por raio de destruição |
-| **Módulos próprios** | 6 |
-| **Linhagens de golden image** | 4 — base e host de container, em x86 e ARM/Graviton |
-| **Componentes AWSTOE** | 3, escritos à mão em YAML |
-| **Máquinas EC2** | 6, todas Graviton, em dois ambientes |
+| **Configurações Terraform** | 6 states — `bootstrap`, `images`, `network-peering`, mais um por stack de instâncias — isolados por raio de destruição |
+| **Módulos próprios** | 5, todos sob `images/` |
+| **Linhagens de golden image** | 5 — base e host de container (x86 + ARM/Graviton), mais uma base Windows Server 2025 |
+| **Componentes AWSTOE** | 4, escritos à mão em YAML (3 Linux + 1 Windows) |
+| **Máquinas EC2** | Linux Graviton em prod/nonprod mais hosts Windows, um diretório por site |
 | **Exposição de rede** | sem IP público, sem porta 22; entrada vazia por padrão, exceção sempre em `/32` |
 | **Custo recorrente** | ~US$ 36/mês, com budget de US$ 150 |
 
@@ -48,10 +48,10 @@ de snapshot de ~300 GB para ~200 GB. Sem ela o custo cresce em silêncio, sem
 alarme nenhum.
 
 **Uma esteira que não guarda credencial.** Todo push valida formatação,
-sintaxe, lint de linguagem e política como código nas quatro configurações —
+sintaxe, lint de linguagem e política como código em todas as configurações —
 sem chave da AWS em secret, num repositório público onde um fork pode abrir
 pull request. Na primeira execução o tflint apontou doze achados e os doze
-eram reais: nenhum dos seis módulos filhos declarava a própria constraint de
+eram reais: nenhum dos módulos filhos declarava a própria constraint de
 provider. Corrigido nos módulos, não silenciado na configuração. Com o
 checkov foi o contrário — nenhum dos 27 achados era defeito, então cada
 exceção está registrada com o motivo no `.checkov.yaml`.
@@ -83,9 +83,12 @@ normalmente morre num chat e que aqui fica onde alguém vai ler de novo.
   │        │        └─► docker-host-x86        │ cloudwatch · cleanup    │
   │        └─► acme-base-ubuntu-2604-arm64   ──┘                         │
   │                 └─► docker-host-arm64                                │
-  │    + 4 lifecycle policies (COUNT=2, uma por linhagem)                │
+  │    + linhagem Windows Server 2025 (acme-base-windows-2025)           │
+  │    + 4 lifecycle policies (COUNT=2, uma por linhagem Ubuntu)         │
   │                                                                      │
-  │  instances/            6 × t4g (Graviton), subnet privada            │
+  │  instances/            um diretório por site/stack, state próprio      │
+  │    linux-erp-site-{prod,nonprod}: 3 × t4g (map + for_each por host)   │
+  │    win-app-site: hosts Windows Server 2025 · _templates: molde        │
   │    sem IP público · sem key pair por padrão · IMDSv2 obrigatório      │
   │    um security group por máquina · acesso por Session Manager        │
   │                                                                      │
@@ -124,32 +127,68 @@ no console, documentado. Fronteira explícita não gera drift. Fronteira
 implícita gera — alguém muda no console o que o Terraform acha que controla, e
 o próximo `apply` desfaz.
 
-**Estado separado por configuração.** Quatro backends com `key` diferente. Um
-`terraform destroy` em `instances/` não alcança o pipeline de imagem, e nenhum
-deles alcança o bucket de estado. O Terraform não valida unicidade de `key`:
-duas configurações apontando pro mesmo caminho fazem a segunda achar que é dona
-dos recursos da primeira.
+**Estado separado por configuração — e agora por stack dentro de `instances/`.**
+Cada configuração de topo tem `key` de backend própria: `bootstrap/`, `images/`
+e `network-peering/` são um state cada. O `instances/` foi um passo além: deixou
+de ser um state único com todas as máquinas. A raiz agora *indexa* e não
+provisiona nada; cada **site/stack** é uma pasta com `key` própria —
+`instances/swe-prod/linux-erp-site`, `instances/swe-nonprod/linux-erp-site`,
+`instances/swe-nonprod/win-app-site`. Um `terraform destroy` em um stack não
+alcança outro, não alcança o pipeline de imagem, e nenhum alcança o bucket de
+estado. O Terraform não valida unicidade de `key`: duas configurações apontando
+pro mesmo caminho fariam a segunda achar que é dona dos recursos da primeira —
+então cada `key` aqui é deliberada e distinta.
 
-**Arquivo novo é organização; pasta nova é isolamento.** O critério está
-escrito em `instances/main.tf` e não é o tipo de recurso. Arquivo separado é
-decisão humana — o Terraform concatena todos os `.tf` do diretório antes de
-interpretar, e o endereço no state não carrega nome de arquivo, então mover um
-bloco entre arquivos não muda nada. Pasta nova significa **state novo**, e só
-se justifica quando pelo menos uma destas três é verdadeira: raio de destruição
-diferente (o que nunca deve ser alcançado por um apply feito para outra coisa),
-cadência diferente (imagem repica por mês, instância muda por semana, peering
-quase nunca) ou credencial/dono diferente (IAM exige o perfil admin por causa
-do `iam:PassRole`; rede depende de outra equipe). "Uma pasta por tipo de
-recurso" erra nos dois sentidos — uma instância, o volume dela e o EIP dela são
-três tipos com o *mesmo* ciclo de vida.
+**Por que uma pasta por ambiente e por stack, em vez de um state só.** O layout
+anterior mantinha todas as máquinas num único state de `instances/`, como
+`module.ec2-instance["..."]`, um `.tf` por máquina. Funcionava, mas dois
+problemas cresciam com o parque. Primeiro, **raio de destruição**: um `destroy`
+errado ou um plan ruim mexia em prod e nonprod juntos, porque dividiam o mesmo
+state. Segundo, **visualização**: `terraform plan`/`state list` devolvia todas
+as máquinas da conta de uma vez, e ler "o que exatamente está em produção agora"
+significava filtrar ruído. Separar por ambiente e por stack faz cada `plan`
+mostrar exatamente as máquinas daquele site e ambiente — prod é uma pasta que
+você abre de propósito, nonprod é outra — e uma mudança em um nunca aparece no
+plan do outro. O custo é real e está registrado: mais backends para inicializar
+e um `terraform state mv` entre states foi preciso para migrar as seis Linux sem
+recriá-las. Essa troca comprou isolamento e um plan legível, que é o que se
+quer quando a conta de fato roda.
+
+**Mapa + `for_each` chaveado por hostname, não um arquivo por máquina.** Dentro
+de cada stack as máquinas são uma única variável `map(object(...))` — `servers`
+— chaveada pelo hostname do SO, e cada recurso (`aws_instance`, o security group
+dele, a tag de Name na ENI, os dois alarmes de status) é `for_each =
+var.servers`. Adicionar uma máquina a um site agora é *uma entrada no mapa*, e
+ela nasce com SG, instância, ENI tagueada e alarmes — nada para lembrar de
+copiar. O hostname é a chave do mapa **de propósito**: é um identificador de
+negócio estável, é o que entra no endereço do state, e nunca pode ser renomeado
+no lugar (chave renomeada é destrói-e-cria para o Terraform). Esse é o motivo
+prático de o parque ser legível — uma tabela de servidores por stack, lida de
+cima a baixo, em vez de seis arquivos quase idênticos que divergem com o tempo.
+
+**Arquivo novo é organização; pasta nova é isolamento.** O critério está escrito
+em `instances/README.md` e em `docs/instances-decisoes.md`, e não é o tipo de
+recurso. Arquivo separado é decisão humana — o Terraform concatena todos os
+`.tf` do diretório antes de interpretar, e o endereço no state não carrega nome
+de arquivo, então mover um bloco entre arquivos não muda nada. Pasta nova
+significa **state novo**, e só se justifica quando pelo menos uma destas três é
+verdadeira: raio de destruição diferente (prod nunca deve ser alcançado por um
+apply feito para nonprod), cadência diferente (imagem repica por mês, instância
+muda por semana, peering quase nunca) ou credencial/dono diferente (IAM exige o
+perfil admin por causa do `iam:PassRole`; rede depende de outra equipe). "Uma
+pasta por tipo de recurso" erra nos dois sentidos — uma instância, o volume dela
+e o EIP dela são três tipos com o *mesmo* ciclo de vida. A pasta `_templates/`
+existe para que um stack novo parta desse critério, e não de uma cópia de um
+site real, que arrastaria regras e tags de outro site.
 
 O corolário disso apareceu na prática: renomear **arquivo** não exige nada,
 porque o nome do arquivo não entra no endereço do state. Renomear o **label do
-module** exige bloco `moved`, porque ali o endereço *é* a identidade do
-recurso — sem ele o Terraform vê um endereço novo para criar e um órfão para
-destruir. No rename de uma das máquinas isso eram 14 recursos, incluindo a
-instância com o disco em uso. Com o bloco, o plan fechou em
-`0 to add, 0 to change, 0 to destroy` e 14 movimentos.
+module** — ou mover um recurso entre states — exige bloco `moved` ou
+`terraform state mv`, porque ali o endereço *é* a identidade do recurso: sem ele
+o Terraform vê um endereço novo para criar e um órfão para destruir. Quando as
+seis Linux saíram do state único de `instances/` para as pastas por ambiente,
+isso foi feito com `state mv`, não deixando o Terraform destruir e recriar
+instâncias vivas com disco em uso.
 
 **AMI fixa no tfvars, nunca `most_recent = true`.** Parece conveniente e é
 perigoso. Com data source dinâmico, uma build nova de imagem muda o valor e o
@@ -168,8 +207,8 @@ atualiza a filha sozinho.
 **Um security group por máquina.** Antes as instâncias reaproveitavam um SG
 compartilhado. O problema não era o nome: **SG compartilhado é regra
 compartilhada** — abrir uma porta para uma máquina abriria para todas. O SG
-ficou dentro do módulo, então "um por máquina" é o padrão e não depende de
-alguém lembrar.
+agora é criado por máquina pelo próprio `for_each` do stack sobre `servers`,
+então "um por máquina" é o padrão e não depende de alguém lembrar.
 
 **Regras de SG como recursos separados, não blocos inline.** Com
 `ingress`/`egress` inline o Terraform assume a posse de *todas* as regras do
@@ -307,7 +346,7 @@ determinística. Validação que falha sozinha não é detector, é ruído.
 | [`terraform/README.md`](terraform/README.md) | convenções, tags, perfis de acesso, a fronteira console/código |
 | [`terraform/bootstrap/`](terraform/bootstrap) | o problema circular do bucket de estado, resolvido em dois passos |
 | [`terraform/images/`](terraform/images) | a fábrica de imagens: imutabilidade, `create_before_destroy`, retenção |
-| [`terraform/instances/`](terraform/instances) | o módulo EC2, um arquivo por máquina e as decisões de segurança de rede |
+| [`terraform/instances/`](terraform/instances) | um diretório por site/stack, `map + for_each` por hostname, e as decisões de segurança de rede |
 | [`terraform/network-peering/`](terraform/network-peering) | peering entre contas e o episódio do CIDR errado |
 | [`tools/flowlog/`](tools/flowlog) | diagnóstico de tráfego com duckdb, sem montar Athena |
 | [`docs/network-built-in-console.md`](docs/network-built-in-console.md) | a metade da conta que **não** está em Terraform, e por quê |
@@ -368,7 +407,7 @@ inventário.
 - **`terraform plan` na esteira** depende de
   `iam:CreateOpenIDConnectProvider`, que ainda não foi liberado. O CI que
   existe hoje roda tudo o que não precisa de credencial — `fmt`, `validate`,
-  tflint e checkov nas quatro configurações. Falta a metade que lê o estado
+  tflint e checkov em todas as configurações. Falta a metade que lê o estado
   real, e a alternativa — chave de acesso de longa duração num secret, em
   repositório público onde um fork pode abrir pull request — é pior do que a
   lacuna.

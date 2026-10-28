@@ -3,16 +3,16 @@
 # ---------------------------------------------------------------------------
 
 output "arn" {
-  description = "Component ARN, with the version embedded. This is what the recipe consumes."
+  description = "ARN do componente, com a versao embutida. E o que a receita consome."
   value       = aws_imagebuilder_component.this.arn
 }
 
 output "name" {
-  description = "Component name"
+  description = "Nome do componente"
   value       = aws_imagebuilder_component.this.name
 }
 
 output "version" {
-  description = "Component version"
+  description = "Versao do componente"
   value       = aws_imagebuilder_component.this.version
 }

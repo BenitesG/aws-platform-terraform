@@ -1,12 +1,12 @@
 # ---------------------------------------------------------------------------
 # images/infrastructure.tf
 #
-# WHERE the builds run. Shared by all images: role, instance profile, security
-# group and the infrastructure configuration.
+# ONDE as builds rodam. Compartilhado por todas as imagens: papel, instance
+# profile, security group e a infrastructure configuration.
 #
-# A single configuration for both lineages on purpose. If each image had its
-# own, there would be two roles and two security groups doing the same thing -
-# and two places to forget to update.
+# Uma configuracao so para as duas linhagens de proposito. Se cada imagem
+# tivesse a sua, haveria dois papeis e dois security groups fazendo o mesmo -
+# e dois lugares para esquecer de atualizar.
 # ---------------------------------------------------------------------------
 
 module "build_infrastructure" {
@@ -14,10 +14,9 @@ module "build_infrastructure" {
 
   name = "acme-swe-prod-images-build"
 
-  # Names with the "delegated-" prefix because the DelegatedAdminBoundary only
-  # allows creating IAM inside it. The module validates this and fails at the
-  # plan, not at the apply - a name error never turns into an AccessDenied from
-  # AWS.
+  # Nomes com o prefixo "delegated-" porque a DelegatedAdminBoundary so
+  # permite criar IAM dentro dele. O modulo valida isso e falha no plan, nao
+  # no apply - erro de nome nao chega a virar AccessDenied da AWS.
   role_name             = "delegated-imagebuilder"
   instance_profile_name = "delegated-imagebuilder"
 
@@ -29,46 +28,45 @@ module "build_infrastructure" {
 
   instance_types = [var.build_instance_type]
 
-  # true: brings the build instance down if the build fails. Switch to false
-  # TEMPORARILY to investigate a failure from inside the machine.
+  # true: derruba a instancia se a build falhar. Trocar para false
+  # TEMPORARIAMENTE para investigar uma falha por dentro da maquina.
   terminate_instance_on_failure = true
 
-  # Tags of the TEMPORARY build instance and its volume. Without this, the
-  # build hours would show up in the cost report with no allocation.
+  # Tags da instancia TEMPORARIA de build e do volume dela. Sem isto, as horas
+  # de build apareceriam no relatorio de custo sem alocacao.
   resource_tags = var.common_tags
 
-  # Build notification off for now. Turn it on by passing the alarm topic:
+  # Notificacao de build desligada por ora. Ligar passando o topico do A22:
   #   sns_topic_arn = "arn:aws:sns:us-west-2:111122223333:acme-swe-prod-alarms"
   #
-  # Think first: the topic is the same as the infrastructure alarms, and a
-  # successful-build notification would become noise in a channel that needs to
-  # be taken seriously. If you turn it on, consider a dedicated topic.
+  # Pensar antes: o topico e o mesmo dos alarmes de infraestrutura, e
+  # notificacao de build bem-sucedida viraria ruido num canal que precisa ser
+  # levado a serio. Se ligar, considere um topico proprio.
   sns_topic_arn = null
 
-  # S3 logging off. The Image Builder already writes the component log to
-  # CloudWatch Logs in /aws/imagebuilder/<image-name>, and that is where the
-  # diagnosis of the builds that failed in the first cycles came from.
+  # Log em S3 desligado. O Image Builder ja grava o log dos componentes no
+  # CloudWatch Logs em /aws/imagebuilder/<nome-da-imagem>, e e de la que saiu
+  # o diagnostico das builds que falharam em 14/10.
   s3_logs_bucket = null
 }
 
 # ---------------------------------------------------------------------------
-# Infrastructure configuration for ARM64 (Graviton) builds
+# Infrastructure configuration para builds ARM64 (Graviton)
 #
-# WHY A SECOND ONE: the build instance has to RUN the parent image, and the
-# architecture is baked into the AMI. Building an arm64 image requires an arm64
-# instance (t4g); you cannot use t3a. And you cannot list both types in the
-# same configuration: the Image Builder would pick one and the build would
-# fail when the choice did not match the parent image's architecture.
+# POR QUE UMA SEGUNDA: a instancia de build precisa EXECUTAR a imagem-pai, e a
+# arquitetura e assada na AMI. Build de imagem arm64 exige instancia arm64
+# (t4g); nao da para usar t3a. E nao da para listar os dois tipos na mesma
+# configuracao: o Image Builder escolheria um e a build falharia quando a
+# escolha nao casasse com a arquitetura da imagem-pai.
 #
-# WHY IT IS NOT A SECOND CALL OF THE MODULE: the module also creates the role,
-# the instance profile and the security group, and calling it twice would try
-# to create two IAM objects with the same name. Those resources do NOT depend
-# on the architecture, so they are reused from the module - here only
-# instance_types changes.
+# POR QUE NAO E UMA SEGUNDA CHAMADA DO MODULO: o modulo cria tambem o papel, o
+# instance profile e o security group, e chamar duas vezes tentaria criar dois
+# objetos de IAM com o mesmo nome. Esses recursos NAO dependem de arquitetura,
+# entao sao reaproveitados do modulo - aqui so muda o instance_types.
 #
-# When there is a third build variation, it is worth extracting the
-# infrastructure configuration from the module into its own for_each. With two,
-# duplicating is simpler to read than generalizing.
+# Quando houver uma terceira variacao de build, vale extrair a infrastructure
+# configuration do modulo para um for_each proprio. Com duas, duplicar e mais
+# simples de ler do que generalizar.
 # ---------------------------------------------------------------------------
 
 resource "aws_imagebuilder_infrastructure_configuration" "build_arm64" {
@@ -80,9 +78,8 @@ resource "aws_imagebuilder_infrastructure_configuration" "build_arm64" {
   subnet_id          = var.build_subnet_id
   security_group_ids = [module.build_infrastructure.security_group_id]
 
-  # Tags of the TEMPORARY build instance and its volume - the provider's
-  # default_tags does not reach them, because the service is the one that
-  # creates them.
+  # Tags da instancia TEMPORARIA de build e do volume dela - o default_tags do
+  # provider nao alcanca, porque quem as cria e o servico.
   resource_tags = var.common_tags
 
   terminate_instance_on_failure = true

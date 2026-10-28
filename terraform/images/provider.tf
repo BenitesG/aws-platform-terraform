@@ -16,21 +16,19 @@ terraform {
 provider "aws" {
   region = var.region
 
-  # ATTENTION: here the profile must be the DelegatedAdministrator
-  # (acme-swe-prod-admin), because this configuration creates a role and an
-  # instance profile. PowerUserAccess has neither iam:GetRole nor
-  # iam:GetInstanceProfile, and without those READS the apply fails AFTER
-  # creating the resource - leaving an orphan object, created in AWS but
-  # absent from the state.
+  # ATENCAO: aqui o perfil precisa ser o DelegatedAdministrator
+  # (acme-swe-prod-admin), porque esta configuracao cria papel e instance
+  # profile. O PowerUserAccess nao tem iam:GetRole nem iam:GetInstanceProfile,
+  # e sem essas LEITURAS o apply falha DEPOIS de criar o recurso - deixando
+  # objeto orfao, criado na AWS mas ausente do estado.
   #
-  # The BACKEND, on the other hand, uses the AWS_PROFILE environment variable:
-  # it only needs S3, which PowerUserAccess has. Explicit configuration (here)
-  # beats the environment variable, so the two halves coexist.
+  # O BACKEND, por outro lado, usa a variavel de ambiente AWS_PROFILE: ele so
+  # precisa de S3, que o PowerUserAccess tem. Configuracao explicita (aqui)
+  # vence variavel de ambiente, entao as duas metades convivem.
   profile = var.aws_profile
 
-  # default_tags applies these tags to everything the provider creates, with
-  # no need to repeat them on each resource. It is where the tagging standard
-  # survives.
+  # default_tags aplica estas tags em tudo que o provider criar, sem precisar
+  # repetir em cada recurso. E onde a norma de tagueamento sobrevive.
   default_tags {
     tags = var.common_tags
   }

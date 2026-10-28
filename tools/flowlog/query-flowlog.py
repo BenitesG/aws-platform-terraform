@@ -65,7 +65,7 @@ PROFILE = os.environ.get("FLOWLOG_PROFILE", "acme-swe-prod")
 INSTANCE_IP = os.environ.get("FLOWLOG_INSTANCE_IP", "10.20.1.50")  # acme-swe-nonprod-dataflow
 INSTANCE_ENI = os.environ.get("FLOWLOG_INSTANCE_ENI", "eni-0a1b2c3d4e5f60718")
 NAT_EIP = os.environ.get("FLOWLOG_NAT_EIP", "203.0.113.25")
-PROD_CIDR_PREFIX = os.environ.get("FLOWLOG_PROD_CIDR_PREFIX", "172.31.")  # production VPC, vpc-9f8e7d6c
+PROD_CIDR_PREFIX = os.environ.get("FLOWLOG_PROD_CIDR_PREFIX", "172.31.")  # production VPC, vpc-0a1b2c3d4e5f60002
 
 
 def download(day: str, dest_dir: str) -> int:

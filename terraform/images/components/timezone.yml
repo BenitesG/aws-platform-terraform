@@ -1,62 +1,62 @@
-# EC2 Image Builder component.
+# Componente do EC2 Image Builder.
 #
-# A component is a recipe of steps. The possible phases are:
-#   build     - runs during image construction
-#   validate  - checks the image before creating the AMI
-#   test      - runs on an instance launched from the finished AMI
+# Um componente e uma receita de passos. As fases possiveis sao:
+#   build     - executa durante a construcao da imagem
+#   validate  - verifica a imagem antes de criar a AMI
+#   test      - executa numa instancia lancada a partir da AMI pronta
 #
 # ---------------------------------------------------------------------------
-# VERSION 1.0.1 - adds the TIME SOURCE, decided on 2026-10-19.
+# VERSAO 1.0.1 - acrescenta a FONTE DE TEMPO, decidido em 19/10/2026.
 #
-# WHY IT WENT HERE instead of a new component: this component already deals
-# with time, and it is used by BOTH base lineages - the children inherit. A
-# new component would require adding it to the recipes, which replaces the
-# recipe just the same, with no gain and one more piece to maintain.
+# POR QUE ENTROU AQUI e nao num componente novo: este componente ja trata de
+# tempo, e e usado pelas DUAS linhagens base - as filhas herdam. Um componente
+# novo exigiria acrescenta-lo as receitas, o que substitui receita do mesmo
+# jeito, sem ganho nenhum e com uma peca a mais para manter.
 #
-# THE PROBLEM THIS SOLVES, diagnosed on the integration worker:
+# O PROBLEMA QUE ISTO RESOLVE, diagnosticado na operationalflow em 19/10:
 #
 #   System clock synchronized: no      NTP service: active
-#   ^- 169.254.169.123   Stratum 3  Reach 377  +719ms   <- "-" = NOT combined
-#   ^? ntp-nts-*.canonical  Stratum 0  Reach 0          <- never responded
+#   ^- 169.254.169.123   Stratum 3  Reach 377  +719ms   <- "-" = NAO combinada
+#   ^? ntp-nts-*.canonical  Stratum 0  Reach 0          <- nunca respondeu
 #
-# The Ubuntu image ships with FIVE Canonical NTS pools marked "prefer", plus
-# the AWS service also "prefer". The Canonical sources require TCP 4460 (NTS
-# key establishment, RFC 8915) and the security group egress is restricted to
-# 443/80 - so they are unreachable. With several preferred sources and only
-# one reachable, chrony averaged the AWS one and did NOT use it to correct.
+# A imagem do Ubuntu vem com CINCO pools NTS da Canonical marcados "prefer",
+# mais o servico da AWS tambem "prefer". As fontes da Canonical exigem
+# TCP 4460 (NTS key establishment, RFC 8915) e a saida do security group e
+# restrita a 443/80 - entao sao inalcancaveis. Com varias fontes preferidas e
+# so uma alcancavel, o chrony media a da AWS e NAO a usava para corrigir.
 #
-# The AWS time service lives at 169.254.169.123, LINK-LOCAL, which does not
-# depend on a route or on a security group. Leaving it as the single source,
-# chrony selects it.
+# O servico de tempo da AWS fica em 169.254.169.123, LINK-LOCAL, que nao
+# depende de rota nem de security group. Deixando-o como fonte unica, o chrony
+# o seleciona.
 #
-# Do NOT open 4460 to Canonical: it would be six third-party /32s, with no
-# managed prefix list, that change without notice - and it would widen the
-# egress restriction that mitigates the lateral-movement risk.
+# NAO abrir a 4460 para a Canonical: seriam seis /32 de terceiro, sem prefix
+# list gerenciada, que mudam sem aviso - e alargaria a restricao de saida que
+# mitiga o risco R07.
 # ---------------------------------------------------------------------------
 
-name: timezone
-description: America/Sao_Paulo timezone and time source on the AWS service
+name: fuso-horario
+description: Fuso horario America/Sao_Paulo e fonte de tempo no servico da AWS
 schemaVersion: 1.0
 
 phases:
   - name: build
     steps:
-      - name: SetTimezone
+      - name: DefinirFuso
         action: ExecuteBash
         inputs:
           commands:
             - timedatectl set-timezone America/Sao_Paulo
 
-      - name: PinAwsTimeSource
+      - name: FixarFonteDeTempoDaAWS
         action: ExecuteBash
         inputs:
           commands:
             - |
               set -euo pipefail
 
-              # The Canonical sources may live in two places, depending on the
-              # image version: in chrony.conf or in sources.d/. Handle both,
-              # without failing if one does not exist.
+              # As fontes da Canonical podem estar em dois lugares, dependendo
+              # da versao da imagem: no chrony.conf ou em sources.d/. Tratar os
+              # dois, sem falhar se um nao existir.
               if [ -f /etc/chrony/chrony.conf ]; then
                 sed -i 's/^pool .*ubuntu\.com/#&/' /etc/chrony/chrony.conf
                 sed -i 's/^server .*ubuntu\.com/#&/' /etc/chrony/chrony.conf
@@ -64,34 +64,32 @@ phases:
 
               rm -f /etc/chrony/sources.d/*ubuntu*.sources || true
 
-              # Ensure the AWS service is declared, idempotently: if it already
-              # exists in chrony.conf, do not duplicate it.
+              # Garantir o servico da AWS declarado, de forma idempotente: se
+              # ja existir no chrony.conf, nao duplica.
               if ! grep -rq '169\.254\.169\.123' /etc/chrony/ 2>/dev/null; then
                 echo 'server 169.254.169.123 prefer iburst minpoll 4 maxpoll 4' \
                   > /etc/chrony/sources.d/aws-time-sync.sources
               fi
 
-              echo "--- configured sources ---"
+              echo "--- fontes configuradas ---"
               grep -rh '^\(server\|pool\)' /etc/chrony/ || true
 
   - name: validate
     steps:
-      # THE CHECK IS SIMPLE ON PURPOSE.
+      # A CHECAGEM E SIMPLES DE PROPOSITO.
       #
-      # Of the three build failures of the Docker component, ONE was a real bug
-      # and TWO were the validation code itself - a "grep -A3" that cut off
-      # before the field and rejected correct configuration. The lesson on
-      # record: a complicated checker becomes a source of failure instead of a
-      # detector.
+      # Das tres falhas de build do componente de Docker, UMA foi bug real e
+      # DUAS foram o proprio codigo de validacao - um "grep -A3" que cortava
+      # antes do campo e reprovava configuracao correta. A licao registrada:
+      # verificador complicado vira fonte de falha em vez de detector.
       #
-      # So we do NOT check "synchronized: yes": synchronizing takes minutes and
-      # depends on the build instance's initial clock, which would make the
-      # build intermittent - the worst kind of failure.
+      # Entao NAO se verifica "synchronized: yes": sincronizar leva minutos e
+      # depende do relogio inicial da instancia de build, o que tornaria a
+      # build intermitente - o pior tipo de falha.
       #
-      # What we prove is the EFFECT of the configuration: exactly ONE source is
-      # left, and it is the AWS one. That is deterministic and fails if the sed
-      # did not take.
-      - name: VerifySingleTimeSource
+      # O que se prova e o EFEITO da configuracao: sobrou exatamente UMA fonte,
+      # e e a da AWS. Isso e deterministico e falha se o sed nao pegou.
+      - name: ConferirFonteUnica
         action: ExecuteBash
         inputs:
           commands:
@@ -99,27 +97,27 @@ phases:
               set -euo pipefail
 
               if grep -rq 'ubuntu\.com' /etc/chrony/ 2>/dev/null; then
-                echo "ERROR: a Canonical source is still configured:"
+                echo "ERRO: ainda ha fonte da Canonical configurada:"
                 grep -rn 'ubuntu\.com' /etc/chrony/ || true
                 exit 1
               fi
 
               if ! grep -rq '169\.254\.169\.123' /etc/chrony/ 2>/dev/null; then
-                echo "ERROR: the AWS time service is not configured"
+                echo "ERRO: o servico de tempo da AWS nao esta configurado"
                 exit 1
               fi
 
-              echo "OK: single time source = 169.254.169.123 (link-local)"
+              echo "OK: fonte de tempo unica = 169.254.169.123 (link-local)"
 
-      - name: VerifyTimezone
+      - name: ConferirFuso
         action: ExecuteBash
         inputs:
           commands:
             - |
               set -euo pipefail
-              TZ=$(timedatectl show --property=Timezone --value)
-              echo "timezone: ${TZ}"
-              if [ "${TZ}" != "America/Sao_Paulo" ]; then
-                echo "ERROR: expected timezone America/Sao_Paulo"
+              FUSO=$(timedatectl show --property=Timezone --value)
+              echo "fuso: ${FUSO}"
+              if [ "${FUSO}" != "America/Sao_Paulo" ]; then
+                echo "ERRO: fuso esperado America/Sao_Paulo"
                 exit 1
               fi

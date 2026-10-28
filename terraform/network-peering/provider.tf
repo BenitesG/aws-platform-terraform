@@ -16,10 +16,10 @@ terraform {
 provider "aws" {
   region = var.region
 
-  # PowerUserAccess IS ENOUGH here: nothing in IAM is created in this directory.
+  # PowerUserAccess BASTA aqui: nao se cria nada de IAM neste diretorio.
   #
-  # The peering and the route are EC2 calls (CreateVpcPeeringConnection,
-  # CreateRoute, ModifyVpcPeeringConnectionOptions) and PowerUser has them.
+  # O peering e a rota sao chamadas de EC2 (CreateVpcPeeringConnection,
+  # CreateRoute, ModifyVpcPeeringConnectionOptions) e o PowerUser as tem.
   profile = var.aws_profile
 
   default_tags {

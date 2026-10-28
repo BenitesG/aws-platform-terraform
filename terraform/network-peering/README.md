@@ -1,331 +1,463 @@
-# VPC peering with the production account
+# VPC peering com a conta de produção
 
-Connection between the VPC of the `acme-swe-prod` account (`111122223333`) and
-the production VPC, both in **us-west-2**. Described in the project's internal
-action plan.
+Conexão entre a VPC da conta `acme-swe-prod` (111122223333) e a VPC de produção,
+ambas em **us-west-2**. Cartões **A33 → A34** do plano de ação.
 
 ---
 
-## Current state
+## Estado atual
 
 | | |
 |---|---|
-| Connection | **`pcx-0b1b2b3b4b5b6b7b8`** — `active`, created and accepted on 2026-10-16 |
-| Our side | `vpc-0aaaa1111bbbb2222` — `10.20.0.0/16` |
-| Production side | account `444455556666` · **`vpc-9f8e7d6c`** · **`172.31.0.0/16`** |
-| Route in `rt-private` | `172.31.0.0/16 → pcx-0b1b...`, `active` — created **by hand** |
-| DNS resolution, our side | `false` — step 2 has not been applied yet |
-| DNS resolution, their side | `null` — not enabled **or** not visible from here |
+| Conexão | **`pcx-0a1b2c3d4e5f90002`** |
+| Estado | **`active`** — criada e aceita em 16/10/2026 |
+| Nosso lado | `vpc-0a1b2c3d4e5f60001` — `10.20.0.0/16` |
+| Lado da produção | conta `444455556666` · **`vpc-0a1b2c3d4e5f60002`** · **`172.31.0.0/16`** |
+| Rota na `rt-private` | **`172.31.0.0/16 → pcx-0a1b...`, `active`** — criada **à mão**, ver "Divergência" |
+| Resolução de DNS nossa | **`false`** — a etapa 2 ainda não foi aplicada |
+| Resolução de DNS deles | `null` — não habilitado **ou** não visível daqui |
 
-**Zero cost:** peering has no hourly charge.
+Criada em 16/10/2026. **Custo zero:** peering não tem cobrança por hora.
 
-### The previous connection was deleted — and why
+### A conexão anterior foi apagada — e por quê
 
-The first connection, **`pcx-0c1c2c3c4c5c6c7c8`** (created and accepted on
-10/15, for `vpc-0d1d2d3d4d5d6d7d8` / `172.16.0.0/16`), was **deleted on 10/16**.
+A primeira conexão, **`pcx-0a1b2c3d4e5f90001`** (criada e aceita em 15/10, para
+`vpc-0a1b2c3d4e5f60003` / `172.16.0.0/16`), foi **apagada em 16/10**.
 
-**Reason:** that VPC had **no resource** assigned to it. The peering was
-technically correct and the destination was useless — there was nothing to talk
-to.
+**Motivo:** aquela VPC não tinha **recurso nenhum** atribuído. O peering estava
+tecnicamente correto e o destino era inútil — não havia com o que conversar.
 
-**Why keeping both in parallel was not possible.** That was the initial
-recommendation: peering is free, and keeping the old one would preserve a ready
-path while the new one was being accepted. It did not work, and the reason is
-concrete: **both routes would go to the same `rt-private`**, and a route table
-does not accept two routes to the same destination. The replacement was not a
-choice.
+**Por que não foi possível manter as duas em paralelo.** A recomendação inicial
+era essa: peering é gratuito, e manter a antiga preservaria um caminho pronto
+enquanto a nova era aceita. Não deu, e o motivo é concreto: **as duas rotas
+iriam para a mesma `rt-private`**, e route table não aceita duas rotas para o
+mesmo destino. A substituição não foi escolha.
 
-> At the time the information was that the new VPC used **the same** CIDR. It
-> turned out not to — see below. With different CIDRs, coexisting **would** have
-> been possible. The decision was made with the information available.
+> Na época a informação era de que a VPC nova usava **o mesmo** CIDR. Acabou
+> não usando — ver abaixo. Com os CIDRs diferentes, coexistir **teria** sido
+> possível. A decisão foi tomada com a informação disponível, e fica
+> registrada assim.
 
-**Deleting was irreversible:** `pcx-0c1c...` does not come back, and the
-acceptance production had given on 10/15 died with it. Redoing it required a new
-round of acceptance.
+**Apagar foi irreversível:** o `pcx-0a1b...` não volta, e o aceite que a produção
+havia dado em 15/10 morreu com ele. Refazer exigiu nova rodada de aceite.
 
----
+### O CIDR estava errado — o erro mais caro do dia
 
-## The CIDR was wrong — the most expensive error of the day
+**`172.16.0.0/16` era o CIDR da VPC ANTERIOR.** A `vpc-0a1b2c3d4e5f60002` usa
+**`172.31.0.0/16`** — confirmado na fonte depois do aceite, com `CidrBlockSet`
+trazendo um único bloco, sem faixa secundária.
 
-This is the best diagnostic story in the repository. Read it in full.
-
-**`172.16.0.0/16` was the CIDR of the PREVIOUS VPC.** `vpc-9f8e7d6c` uses
-**`172.31.0.0/16`** — confirmed at the source after acceptance, with
-`CidrBlockSet` bringing a single block, no secondary range.
-
-The first route was created with the wrong value, and **the state looked
-healthy**:
+A primeira rota foi criada com o valor errado, e **o estado parecia saudável**:
 
 ```
-pcx-0b1b2b3b4b5b6b7b8   active
-172.16.0.0/16 -> pcx-0b1b2b3b4b5b6b7b8   active
+pcx-0a1b2c3d4e5f90002   active
+172.16.0.0/16 -> pcx-0a1b2c3d4e5f90002   active
 ```
 
-Peering `active`, route `active`, and **nothing would work**. Traffic to the
-real servers (`172.31.x.x`) would find no specific route, would fall into
-`0.0.0.0/0` and leave through the **NAT to the internet**. Traffic to
-`172.16.x.x` would enter the connection and find nobody. In both cases:
-**timeout with no error message.**
+Peering `active`, rota `active`, e **nada funcionaria**. Tráfego para os
+servidores reais (`172.31.x.x`) não encontraria rota específica, cairia no
+`0.0.0.0/0` e sairia pelo **NAT para a internet**. Tráfego para `172.16.x.x`
+entraria na conexão e não acharia ninguém. Nos dois casos: **timeout sem
+mensagem de erro.**
 
-**The root cause was not technical:** `172.16.0.0/16` was information **passed
-along**, never verified. And there was no way to verify it beforehand — while
-the connection is `pending-acceptance`, AWS returns `null` in
-`AccepterVpcInfo.CidrBlock`. Only after acceptance can it be confirmed.
+**A causa raiz não foi técnica:** `172.16.0.0/16` era informação **repassada**,
+nunca verificada. E não havia como verificar antes — enquanto a conexão está
+`pending-acceptance` a AWS devolve `null` em `AccepterVpcInfo.CidrBlock`. Só
+depois do aceite dá para confirmar.
 
-**That is why "check the CIDR at the source" is a separate step in the
-checklist, not a formality.** It was checked, it diverged, and the route was
-fixed by hand.
+**É por isso que "conferir o CIDR na fonte" é passo separado do checklist, e
+não formalidade.** Foi conferido, divergiu, e a rota foi corrigida à mão.
 
-### Suspicion to confirm: this appears to be their default VPC
+### Suspeita a confirmar: isso parece ser a VPC default deles
 
-Three signs together: an **8-character** ID (pre-2016 format), CIDR
-**`172.31.0.0/16`** and **no secondary range**. It is the signature of an **AWS
-default VPC** — every account is born with one, in that range. The 8-character
-ID is not a truncation: it is the old format, from a VPC created before ~2016,
-and it is still valid (the validation in `variables.tf` accepts `{8,17}`).
+Três sinais juntos: ID de **8 caracteres** (formato pré-2016), CIDR
+**`172.31.0.0/16`** e **nenhuma faixa secundária**. É a assinatura de **VPC
+default da AWS** — toda conta nasce com uma, nessa faixa.
 
-It matters to know because a default VPC comes with an **Internet Gateway and
-automatic public IP**, the opposite design to ours — which is exactly why the
-default VPCs of this account's 17 regions were deleted. Production running in a
-default VPC is plausible in an old account, but it is worth knowing that this is
-what we are reaching, and not a VPC designed for the role.
+Importa saber porque VPC default vem com **Internet Gateway e IP público
+automático**, desenho oposto ao nosso — foi exatamente por isso que as VPCs
+default das 17 regiões desta conta foram apagadas. Produção rodando em VPC
+default é plausível em conta antiga, mas vale saber que é isso que estamos
+alcançando, e não uma VPC desenhada para o papel.
 
-### A new consequence for Docker — the risk changed status
+### Uma reversão que vale registrar
 
-`172.31.0.0/16` **is in Docker's allocation path** (`172.17` going up to
-`172.31`), and it is the last range before it moves to `192.168`.
+O levantamento de setembro **supunha `172.31.0.0/16`**, e isso ficou nos
+documentos como suposição errada quando apareceu o `172.16.0.0/16` em 15/10.
 
-The 10/15 decision to keep the pool at the default rested on **zero risk**:
-production was `172.16.0.0/16`, off the path. Now:
+Com **duas VPCs** na conta de produção, cada informação se referia a uma. Para
+a VPC que de fato importa, **o levantamento estava certo**. A conclusão "o
+levantamento errou" é que estava incompleta.
+
+### Consequência nova para o Docker — risco mudou de status
+
+`172.31.0.0/16` **está no caminho de alocação do Docker** (`172.17` subindo até
+`172.31`), e é a última faixa antes de ele passar para `192.168`.
+
+A decisão de 15/10 de manter o pool no padrão se apoiava em **risco zero**: a
+produção era `172.16.0.0/16`, fora do caminho. Agora:
 
 ```
-ZERO risk  ->  LOW AND REAL risk
+risco ZERO  ->  risco BAIXO E REAL
 ```
 
-The probability is still low — it requires **15 networks** created earlier on
-the same host, which is dozens of `docker-compose` stacks. **It was not
-reverted.** But if "the container host does not talk to production" shows up,
-**this is the first hypothesis**: a container network creates a **local route**,
-the local route beats the VPC route, and the local network does not escape — it
-**swallows** the traffic. The rule for future ranges does not change: avoid
-`172.17`–`172.31` when creating a new VPC or subnet.
+Probabilidade segue baixa — exige **15 redes** criadas antes no mesmo host, o
+que são dezenas de stacks `docker-compose`. **Não foi revertido.** Mas se
+aparecer "o host de container não fala com a produção", **esta é a primeira
+hipótese**: rede de container cria **rota local**, rota local vence a rota da
+VPC, e a rede local não escapa — ela **engole**.
 
----
+Ver `CIDRs.txt`, seção do Docker.
 
-## The route is outside Terraform — and how to import it
+### Divergência: a rota está fora do Terraform
 
-The route `172.31.0.0/16 → pcx-0b1b2b3b4b5b6b7b8` was created **by hand**, and
-this directory's `terraform state list` has **only** the connection:
+A rota `172.31.0.0/16 → pcx-0a1b2c3d4e5f90002` foi criada **à mão**, e o
+`terraform state list` deste diretório tem **só** a conexão:
 
 ```
 aws_vpc_peering_connection.production
 ```
 
-**Consequence:** uncommenting step 2 and applying would fail with
-`RouteAlreadyExists` — Terraform would try to create a route that already
-exists.
+**Consequência:** descomentar a etapa 2 e aplicar falharia com
+`RouteAlreadyExists` — o Terraform tentaria criar uma rota que já existe.
 
-**The recommended path is `import`**, not delete-and-recreate: it brings the
-existing route into the state without touching the traffic.
+**O caminho recomendado é `import`**, não apagar e recriar: traz a rota
+existente para o estado sem tocar no tráfego.
 
 ```powershell
 $env:AWS_PROFILE = "acme-swe-prod"
-# 1. uncomment step 2 in main.tf (import requires the resource in the code)
-# 2. import the route that already exists
-terraform import aws_route.to_production "rtb-0a1a2a3a4a5a6a7a8_172.31.0.0/16"
-# 3. plan: expected 1 to add (only the DNS options) and NO change to the route
+# 1. descomentar a etapa 2 do main.tf (o import exige o recurso no codigo)
+# 2. importar a rota que ja existe
+terraform import aws_route.to_production "rtb-0a1b2c3d4e5f80001_172.31.0.0/16"
+# 3. plan: esperado 1 to add (so as opcoes de DNS) e NENHUMA mudanca na rota
 terraform plan
 ```
 
-The `plan` after the import is the check that matters: if it wants to **alter**
-the route, it is because the imported value differs from the code — and then the
-suspect is `production_vpc_cidr` in the `tfvars`.
+O `plan` depois do import é a verificação que importa: se ele quiser **alterar**
+a rota, é porque o valor importado difere do código — e aí o suspeito é o
+`production_vpc_cidr` no `tfvars`.
+
+### A etapa 2 foi aplicada em 15/10
+
+Nada a rodar aqui. O `terraform plan` retorna `No changes` com exit code 0 —
+reconferido em 16/10 —, e o estado contém `aws_route.to_production`
+(`r-rtb-0a1b2c3d4e5f800013246677288`) e
+`aws_vpc_peering_connection_options.requester`.
+
+**Nosso lado do A34 está completo.** O que falta é do lado deles, abaixo.
+
+### Para testar, agora existe instância
+
+A **`operationalflow`** (`i-0a1b2c3d4e5fa0001`, `10.20.1.10`) está no ar e
+`Online` no SSM. O teste de conectividade pode ser feito de dentro dela:
+
+```bash
+nc -vz <ip-da-producao> <porta>
+```
+
+**Mas leia isto antes de interpretar o resultado:** a saída do SG daquela
+máquina está restrita a **443/80**. Um teste em porta de banco
+(3306/1433/5432) falha **por desenho**, não por erro de rede — e confundir as
+duas coisas é o jeito mais rápido de diagnosticar errado. Se a integração for
+em 443, dá para testar já.
+
+**Se falhar com tudo aparentemente certo**, a ordem de suspeita é: rota do lado
+deles → NACL do lado deles (é *stateless* e avaliada separadamente do SG) →
+regra de SG.
+
+O **Reachability Analyzer** agora também serve, já que exige origem e destino
+concretos — antes não havia instância para usar como origem.
 
 ---
 
-## Why there are two `apply`s
+## Por que são dois `apply`
 
-The route and the DNS options require the connection to be **`active`**. With it
-in `pending-acceptance`, the `apply` would fail halfway through — with the
-request already created and the state partially applied. That is why step 2 is
-kept **commented out** in `main.tf` until the acceptance comes through.
+A rota e as opções de DNS exigem que a conexão esteja **`active`**. Com ela em
+`pending-acceptance`, o `apply` falharia no meio — com a solicitação já criada
+e o estado parcialmente aplicado. Por isso a etapa 2 fica **comentada** no
+`main.tf` até o aceite sair, no mesmo padrão de `instances/main.tf`.
 
 ```
-apply 1  ─ deletes the old one, creates the new request   ← DONE 10/16
+apply 1  ─ apaga a antiga, cria a solicitação nova   ← FEITO 16/10
    ↓
-       the production owner ACCEPTS                        ← DONE 10/16
+       o responsável da produção ACEITA               ← FEITO 16/10
    ↓
-apply 2  ─ route in rt-private + DNS resolution            ← PENDING
+apply 2  ─ rota na rt-private + resolução de DNS      ← PENDENTE
 ```
 
-**The mechanism showed up twice, and the second time taught more.** On the VPC
-swap, `peer_vpc_id` is **ForceNew**: the connection is destroyed and recreated,
-and the new one is born `pending-acceptance`. In other words step 2 **went
-back** to being commented out after it had already been applied. Swapping the
-VPC of a peering does not exist — it is always a replacement. The pattern holds
-for any resource that depends on a third party's action midway through.
+**O mecanismo apareceu duas vezes, e a segunda ensinou mais.** Na troca de VPC,
+`peer_vpc_id` é **ForceNew**: a conexão é destruída e recriada, e a nova nasce
+`pending-acceptance`. Ou seja a etapa 2 **voltou** a ficar comentada depois de
+já ter estado aplicada. Trocar a VPC de um peering não existe — é sempre
+substituição.
+
+O padrão vale para qualquer recurso que dependa de ação de terceiro no meio do
+caminho.
 
 ---
 
-## What is left, and half of it is not ours
+## O que falta, e metade não é nossa
 
-### On our side
+### Do nosso lado
 
-1. **`import` the route** created by hand (see above).
-2. **`apply` step 2**, which turns on DNS resolution on our side (`false`).
+1. **`import` da rota** criada à mão — ver "Divergência" no Estado atual.
+2. **`apply` da etapa 2**, que liga a resolução de DNS do nosso lado (hoje
+   `false`).
 
-### On the production side — three steps
+### Do lado da produção — três passos
 
-1. ~~**Accept the request**~~ — **DONE on 10/16** for
-   `pcx-0b1b2b3b4b5b6b7b8`.
-2. **Return route:** destination `10.20.0.0/16`, target the peering connection,
-   in the route table **of the subnets involved**. Reported as done "on the
-   default route" — **and this needs to be confirmed**.
-3. **Accepter DNS resolution** — Actions → Edit DNS settings, if the integration
-   uses a name instead of an IP. Today `AccepterVpcInfo.PeeringOptions` returns
-   `null`, which may mean not enabled **or** not visible from here.
+1. ~~**Aceitar a solicitação**~~ — **FEITO em 16/10** para a
+   `pcx-0a1b2c3d4e5f90002`.
+2. **Rota de volta:** destino `10.20.0.0/16`, target a conexão de peering, na
+   route table **das subnets envolvidas**. Informado como feito "na rota
+   default" — **e isso precisa ser confirmado**, ver abaixo.
+3. **Accepter DNS resolution** — Actions → Edit DNS settings, se a integração
+   usar nome em vez de IP. Hoje `AccepterVpcInfo.PeeringOptions` retorna
+   `null`, o que pode significar não habilitado **ou** não visível daqui.
 
-These three **cannot be in this code**: they are resources in another account,
-and we have no credentials there.
+Esses três **não podem estar neste código**: são recursos em outra conta, e não
+temos credencial lá.
 
-> ### To confirm: the "default route" may have no effect at all
+> ### A confirmar: "rota default" pode não ter efeito nenhum
 >
-> A route table only applies to the **subnets associated with it**. The **main**
-> route table (the "default" one) is used only by the subnets that **nobody
-> explicitly associated** with another. If the subnets of the integration
-> servers have an explicit association with another route table, the route in
-> the main one **does nothing** — and the symptom is **timeout with no error**,
-> identical to a missing route. Being a default VPC, there is a reasonable
-> chance they use the main one, but "likely" is not "verified".
+> Route table só vale para as **subnets associadas a ela**. A route table
+> **main** (a "default") é usada apenas pelas subnets que **ninguém associou
+> explicitamente** a outra.
+>
+> Se as subnets dos servidores da integração têm associação explícita a outra
+> route table, a rota na main **não faz nada** — e o sintoma é **timeout sem
+> erro**, idêntico a rota ausente. Não há como distinguir os dois daqui.
+>
+> **Pergunta para ele:** as subnets onde estão os servidores usam essa route
+> table? Se não souber, olhar a subnet do servidor e ver qual route table
+> aparece associada.
+>
+> Por ser VPC default há chance razoável de que usem a main — VPC default vem
+> assim de fábrica. Mas "provável" não é "verificado".
 
-### How to check from our side
+### Do nosso lado — como conferir
 
 ```powershell
 $env:AWS_PROFILE = "acme-swe-prod"
 
 aws ec2 describe-vpc-peering-connections `
   --filters "Name=status-code,Values=active,pending-acceptance" `
-  --query "VpcPeeringConnections[].{Id:VpcPeeringConnectionId,State:Status.Code,TheirCIDR:AccepterVpcInfo.CidrBlock,OurDNS:RequesterVpcInfo.PeeringOptions.AllowDnsResolutionFromRemoteVpc}" `
+  --query "VpcPeeringConnections[].{Id:VpcPeeringConnectionId,Estado:Status.Code,CIDRDeles:AccepterVpcInfo.CidrBlock,DNSNosso:RequesterVpcInfo.PeeringOptions.AllowDnsResolutionFromRemoteVpc}" `
   --output table --profile acme-swe-prod
 ```
 
-**Filter by `status-code`**: a deleted connection keeps showing up as `deleted`
-for a few hours, and in an unfiltered list that is confusing. **Why `TheirCIDR`
-matters:** while the connection is pending, AWS does not reveal the other side's
-CIDR; after acceptance it appears, and it is the **only** independent
-confirmation that the route points at the right range. On 10/16 this check
-caught the `172.16` against `172.31` error.
+**Filtrar por `status-code`**, e não consultar sem filtro: conexão apagada
+continua aparecendo como `deleted` por algumas horas, e numa lista sem filtro
+isso confunde — foi o caso da `pcx-0a1b...` em 16/10.
+
+**Por que o `CIDRDeles` importa:** enquanto a conexão está pendente a AWS não
+revela o CIDR do outro lado. Depois do aceite ele aparece, e é a **única**
+confirmação independente de que a rota aponta para a faixa certa. Em 16/10 essa
+conferência pegou o erro de `172.16` contra `172.31`.
 
 ---
 
-## What this directory deliberately does not do
+## O que este diretório deliberadamente não faz
 
-**It does not create a security group rule.** That is the integration with the
-legacy ERP, and it depends on two answers from engineering that do not exist
-yet: **who initiates the connection** and **on which port**.
+**Não cria regra de security group.** É o cartão **A35**, e depende de duas
+respostas da engenharia que ainda não existem: **quem inicia a conexão** e **em
+qual porta**.
 
-That is why creating the peering now is safe: **the connection existing does not
-make any traffic flow.** The security group decides that, and the one on the
-`dataflow` instance (`acme-swe-nonprod-dataflow-sg`) still has empty ingress and
-egress restricted to 443/80. Each machine now has its **own SG**, created inside
-the `ec2-instance` module — which is why there is no fixed ID here: Terraform
-creates it. The old shared baseline SG was left orphaned. This changes the
-integration design: the rule goes **in the SG of the machine that needs it**,
-not in a shared SG.
+Foi por isso que criar o peering agora é seguro: **a conexão existir não faz
+tráfego nenhum passar.** Quem decide isso é o security group, e o da
+`operationalflow` (`acme-swe-nonprod-operationalflow-sg`,
+`sg-0a1b2c3d4e5fd0001`) continua com entrada vazia e saída restrita a 443/80.
 
-> **Caution.** Opening the integration port is easy to reverse on paper and hard
-> in practice: once real traffic is flowing, closing it breaks the integration.
-> The time to decide the design is before passing traffic.
+> **Nota de 16/10:** cada máquina passou a ter **SG próprio**, criado dentro do
+> módulo `ec2-instance`. O `acme-swe-prod-app01-sg` do A18 ficou órfão. Isso
+> muda o A35: a regra da integração entra **no SG da máquina que precisa**, não
+> num SG compartilhado — que seria **regra compartilhada**, valendo para toda
+> máquina que o usasse.
 
-If production **pulls** from the instance, it reopens the security group design
-with ingress today empty by design. If the instance **sends**, egress on 443/80
-does not reach a database on 3306/1433/5432 — and opening those ports undoes the
-mitigation of the lateral-movement risk.
+> **Atenção ao A35.** Abrir a porta da integração é fácil de reverter no papel e
+> difícil na prática: depois que o tráfego real estiver passando, fechar derruba
+> a integração. A hora de decidir o desenho é antes de passar tráfego.
 
----
-
-## Boundary with the rest of the repository
-
-The VPC and the `rt-private` were built **in the console** and are not in the
-Terraform state. This does not stop the route from living in code: **`aws_route`
-manages ONE route inside an existing route table**, referenced by ID, without
-requiring the table to be under Terraform management — so the route goes in code
-without importing the network and without producing drift on the table.
-
-The route goes in **`rt-private`** (`rtb-0a1a2a3a4a5a6a7a8`), explicitly
-associated with `private-c` and `private-d`. **It does not go in `rt-main`**,
-which is left with only `local` on purpose — the decision to leave the main
-route table with only `local`, so that "forgetting to associate" fails safely.
+Se a produção **puxa** da app01, reabre o **A18** (entrada hoje vazia por
+desenho). Se a app01 **envia**, a saída em 443/80 não alcança banco em
+3306/1433/5432 — e abrir essas portas desfaz a mitigação do risco **R07**.
 
 ---
 
-## Pitfalls
+## Fronteira com o resto do repositório
 
-### A route is needed in BOTH accounts
+A VPC e a `rt-private` foram construídas **no console** e não estão no estado
+do Terraform. Isso não impede a rota ficar em código:
 
-Half the way does not work: the symptom is **timeout with no error message** —
-not "missing route". Our route alone does nothing.
+**O `aws_route` gerencia UMA rota dentro de uma route table existente**,
+referenciada por ID. Não exige que a tabela esteja sob gestão do Terraform. Por
+isso a rota vai em código sem importar a rede e sem gerar drift na tabela.
 
-### Peering does NOT resolve private DNS by default
-
-It must be turned on **in both directions** if the integration uses a name
-instead of an IP. The symptom of missing it is **"the host does not exist"**,
-which looks like an application error and not a network one. The pending request,
-in turn, **expires in 7 days**: if it expires, the `plan` will propose recreating
-it — correct behavior, but it means arranging a new window with the other side.
-
-### Their NACL may block with everything apparently correct
-
-A NACL is **stateless** and evaluated separately from the security group. Worth
-remembering **if connectivity fails with peering, routes and SGs all correct**.
-
-### Peering is NOT transitive
-
-Nobody from the office reaches the instances through it. From three VPCs onward
-the number of connections grows as `n(n-1)/2` and the Transit Gateway becomes the
-right instrument. As long as it is production ↔ `acme-swe-prod`, peering is the
-simplest and the cheapest.
-
-### Swapping the VPC of a peering does not exist — it is a replacement
-
-`peer_vpc_id` is **ForceNew**. Changing the value destroys the connection and
-creates another, which is born `pending-acceptance` and requires a **new
-acceptance** from the other side. The route and the DNS options fall with it,
-because they depend on the connection ID. This is correct, but it means step 2
-**goes back** to being commented out — you cannot swap the VPC in a single apply.
-
-### Deleting a connection is irreversible, and the acceptance dies with it
-
-The ID does not come back, and the other side's acceptance is lost. Before
-deleting, it is worth asking whether **coexisting** solves it: peering is free,
-and two connections to different VPCs are allowed — what prevents coexisting is
-an equal or overlapping CIDR (two routes to the same destination do not fit in
-the same route table).
-
-### `peer_region` is not declared
-
-Both VPCs are in us-west-2. Declaring `peer_region` equal to the provider region
-creates an **inter-region** peering and changes the cost (transfer per GB).
-`auto_accept`, in turn, only works in the same account — between accounts the
-acceptance is necessarily manual, on the other side.
+A rota vai na **`rt-private`** (`rtb-0a1b2c3d4e5f80001`), associada
+explicitamente a `private-c` e `private-d`. **Não vai na `rt-main`**, que fica
+só com `local` de propósito — decisão do A15, para que "esquecer de associar"
+falhe de forma segura.
 
 ---
 
-## Structure
+## Armadilhas
+
+### Rota é necessária nas DUAS contas
+
+Meio caminho não funciona, e o sintoma é **timeout sem mensagem de erro** — não
+"rota ausente". Nossa rota sozinha não faz nada.
+
+### O peering NÃO resolve DNS privado por padrão
+
+Precisa ser ligado **nos dois sentidos** se a integração usar nome em vez de IP.
+O sintoma de faltar é **"o host não existe"**, que parece erro de aplicação e
+não de rede.
+
+### A solicitação pendente expira em 7 dias
+
+Se expirar, o Terraform verá a conexão como `expired` e o próximo `plan`
+proporá recriar. O comportamento é correto, mas significa combinar nova janela
+com o outro lado.
+
+### NACL do lado deles pode bloquear com tudo aparentemente certo
+
+NACL é **stateless** e avaliada separadamente do security group. Não vale
+levantar no pedido inicial — vale lembrar **se a conectividade falhar com
+peering, rotas e SGs todos corretos**.
+
+### O peering NÃO leva os usuários do escritório às instâncias
+
+**Peering não é transitivo.** Ninguém do escritório chega às instâncias por ele.
+Isso continua sendo o ALB da P5 (cartões A37–A40), assunto separado. Confusão
+comum.
+
+### Peering é por par de VPCs
+
+A partir de três VPCs o número de conexões cresce como `n(n-1)/2` e o Transit
+Gateway passa a ser o instrumento certo. Enquanto for produção ↔ `acme-swe-prod`,
+peering é o mais simples e o mais barato.
+
+### Trocar a VPC de um peering não existe — é substituição
+
+`peer_vpc_id` é **ForceNew**. Mudar o valor destrói a conexão e cria outra, que
+nasce `pending-acceptance` e exige **novo aceite** do outro lado. Aconteceu em
+16/10 e custou uma rodada de coordenação.
+
+A rota e as opções de DNS caem junto, porque dependem do ID da conexão. Isso é
+correto, mas significa que a etapa 2 **volta** a ficar comentada — não dá para
+trocar a VPC num único apply.
+
+### Apagar conexão é irreversível, e o aceite morre com ela
+
+O ID não volta, e a aceitação do outro lado se perde. Antes de apagar, vale
+perguntar se **coexistir** resolve: peering é gratuito, e duas conexões para
+VPCs diferentes são permitidas.
+
+**O que impede coexistir** é CIDR igual ou sobreposto: duas rotas para o mesmo
+destino não cabem na mesma route table. Essa foi a razão pela qual a
+substituição de 16/10 pareceu obrigatória — com a informação de que os CIDRs
+eram iguais. Eram diferentes, e coexistir teria sido possível.
+
+### Conexão apagada continua aparecendo no `describe`
+
+Por algumas horas, com `Status.Code = deleted`. Não conta para limite nem gera
+custo, mas polui consulta sem filtro. Usar
+`--filters "Name=status-code,Values=active,pending-acceptance"`.
+
+### `peer_region` não é declarado
+
+As duas VPCs estão em us-west-2 — confirmado em 16/10 pelo
+`AccepterVpcInfo.Region` da conexão nova. Declarar `peer_region` igual à região
+do provider cria peering **inter-região** e muda o custo: a transferência passa
+a ser cobrada por GB.
+
+### `auto_accept` só funciona na mesma conta
+
+Entre contas diferentes a aceitação é obrigatoriamente manual, do outro lado.
+
+---
+
+## Relação com o Docker (cartão A42)
+
+**Isto mudou em 16/10, com a troca de VPC. O que estava escrito aqui antes
+valia para o CIDR anterior.**
+
+O CIDR da produção é **`172.31.0.0/16`** (`vpc-0a1b2c3d4e5f60002`), e essa faixa **está
+no caminho de alocação do Docker** — ele aloca de `172.17.0.0/16` subindo até
+`172.31`, e esta é a última antes de passar para `192.168.0.0/20`.
+
+```
+risco ZERO (com 172.16.0.0/16)  ->  risco BAIXO E REAL (com 172.31.0.0/16)
+```
+
+**A decisão de 15/10 de manter o pool no padrão não foi revertida**, e continua
+defensável: chegar a `172.31` exige **15 redes** criadas antes no mesmo host, o
+que são dezenas de stacks `docker-compose`. Mas a justificativa daquela decisão
+— "a produção não está no caminho de alocação" — **deixou de valer**.
+
+**Se aparecer "o host de container não fala com a produção", esta é a primeira
+hipótese.** O mecanismo: rede de container cria **rota local** no host, rota
+local é mais específica que a rota da VPC, e a rede local não escapa — ela
+**engole** o tráfego que deveria sair pela `eth0`.
+
+**O que o tráfego de saída do container faz não é o problema:** ele passa por
+**MASQUERADE** e chega ao destino com o IP do host, então o IP do container
+nunca aparece na rede. O problema é de **destino**.
+
+**Se um dia precisar fixar o pool**, agora há motivo legítimo — e o caminho
+está em `images/README.md`, seção "O pool de endereços voltou ao padrão":
+escrever o `daemon.json` **antes** do `apt install`, porque
+`default-address-pools` não se aplica à rede `bridge` que o daemon já criou.
+
+**Nota histórica:** a tentativa original de fixar o pool foi revertida em 15/10
+porque a justificativa estava errada — supunha colisão com `172.16.0.0/16`,
+confundindo `172.16.0.0/12` (dezesseis /16) com o /16 da produção. A reversão
+continua certa pelos motivos dela; o que mudou é que agora existe uma colisão
+de verdade, com outra faixa.
+
+**Para a escolha de faixas futuras, a regra não mudou:** evitar
+`172.17`–`172.31` ao criar VPC ou sub-rede nova. O que mudou é que agora há um
+caso concreto dentro dessa faixa.
+
+---
+
+## Tags — divergência deliberada deste diretório
+
+| Tag | Aqui | Nos outros diretórios |
+|---|---|---|
+| `acme:cost-allocation:Project` | `infrastructure` | `best-practices` |
+| `acme:cost-allocation:Application` | `network-traffic` | `golden-image`, `terraform-state`, `app01` |
+
+A `Application` descreve **o que o recurso é**, não o projeto — por isso varia por
+diretório e não deve ser padronizada entre eles.
+
+A `Project` **acompanha o escopo do que está sendo construído** e também varia: aqui a
+conexão é infraestrutura de rede, não entregável do projeto de aprendizado. Isso é o
+critério definido em 15/10, não uma exceção — a uniformidade anterior
+(`best-practices` nos três diretórios) era circunstancial. Consequência no Cost
+Explorer é nula de todo modo, porque **peering não tem custo**: a tag aqui serve para
+inventário, não para rateio.
+
+Trocado em 15/10/2026, **antes** de as tags de alocação de custo serem ativadas na
+conta de gerenciamento. Isso é o que torna a troca limpa: depois da ativação, o mesmo
+recurso apareceria sob dois valores dependendo do mês, e não se reescreve histórico de
+faturamento.
+
+---
+
+## Estrutura
 
 ```
 network-peering/
-├── README.md                    this file
-├── provider.tf                  versions and profile (PowerUser is enough: no IAM)
-├── backend.tf                   remote state, its own key
-├── variables.tf                 variable declarations, with validations
-├── terraform.tfvars             values — does NOT go to git
-├── terraform.tfvars.example     versionable template
-└── main.tf                      step 1 and step 2, both applied
+├── README.md                    este arquivo
+├── provider.tf                  versões e perfil (PowerUser basta: não há IAM)
+├── backend.tf                   estado remoto, key própria
+├── variables.tf                 declaração das variáveis, com validações
+├── terraform.tfvars             valores — NÃO vai para o git
+├── terraform.tfvars.example     modelo versionável
+└── main.tf                      etapa 1 e etapa 2, as duas aplicadas
 ```
 
-The `terraform.tfvars` holds identifiers from **another AWS account** — not
-versioning it means not publishing a third-party team's infrastructure data. The
-`.terraform.lock.hcl`, on the other hand, **must** be versioned: it pins the
-provider version (`5.100.0`) and the hashes, ensuring every `init` uses the same
-provider.
+O `terraform.tfvars` guarda identificadores de **outra conta AWS**. Não
+versionar não é só higiene de segredo: é não publicar dado de infraestrutura de
+equipe de terceiro.

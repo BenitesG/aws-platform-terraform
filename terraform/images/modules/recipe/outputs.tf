@@ -3,21 +3,21 @@
 # ---------------------------------------------------------------------------
 
 output "arn" {
-  description = "Recipe ARN, consumed by the pipeline"
+  description = "ARN da receita, consumido pelo pipeline"
   value       = aws_imagebuilder_image_recipe.this.arn
 }
 
 output "name" {
-  description = "Recipe name"
+  description = "Nome da receita"
   value       = aws_imagebuilder_image_recipe.this.name
 }
 
 output "version" {
-  description = "Recipe version"
+  description = "Versao da receita"
   value       = aws_imagebuilder_image_recipe.this.version
 }
 
 output "parent_image" {
-  description = "Parent AMI used. Useful for recording traceability in the distribution."
+  description = "AMI-pai usada. Util para registrar rastreabilidade na distribuicao."
   value       = aws_imagebuilder_image_recipe.this.parent_image
 }

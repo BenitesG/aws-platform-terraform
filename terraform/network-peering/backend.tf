@@ -1,16 +1,15 @@
 # ---------------------------------------------------------------------------
 # network-peering/backend.tf
 #
-# key DIFFERENT from bootstrap/, images/ and instances/. Its own, isolated state.
+# key DIFERENTE de bootstrap/, images/ e instances/. Estado proprio, isolado.
 #
-# If two configurations used the same key, the second one to run would think it
-# owns the first one's resources - and a destroy would wipe out another
-# project's things. Terraform does not validate this: a unique key per
-# configuration is a manual rule of the repository.
+# Se duas configuracoes usassem o mesmo key, a segunda a rodar acharia que e
+# dona dos recursos da primeira - e um destroy apagaria coisa de outro
+# projeto. O Terraform nao valida isso: key unico por configuracao e regra
+# manual do repositorio.
 #
-# Reminder: the backend block does NOT accept a variable, and it does not
-# inherit the profile from the provider. Before the init:
-#   $env:AWS_PROFILE = "acme-swe-prod"
+# Lembrete: o bloco backend NAO aceita variavel, e ele nao herda o profile do
+# provider. Antes do init:  $env:AWS_PROFILE = "acme-swe-prod"
 # ---------------------------------------------------------------------------
 
 terraform {

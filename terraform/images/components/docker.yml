@@ -1,41 +1,40 @@
-# Docker Engine component.
+# Componente de Docker Engine.
 #
-# Docker does NOT go into the base image, on purpose: the daemon runs as root,
-# and belonging to the "docker" group is equivalent to being root - you can
-# mount the host filesystem inside a container. Separate recipe, stacked on top
-# of the base.
+# Docker NAO entra na imagem base, de proposito: o daemon roda como root, e
+# pertencer ao grupo "docker" equivale a ser root - da para montar o
+# filesystem do host dentro de um container. Receita separada, empilhada
+# sobre a base.
 #
 # ---------------------------------------------------------------------------
-# THE CORE OF THIS COMPONENT IS THE LOG LIMIT, NOT THE NETWORK
+# O PONTO CENTRAL DESTE COMPONENTE E O LIMITE DE LOG, NAO A REDE
 # ---------------------------------------------------------------------------
 #
-# log-opts with max-size 10m and max-file 3 is what has practical value here:
-# without a limit, a container that logs a lot fills the 20 GB root disk and
-# brings the machine down. The symptom is "the server stopped", with no obvious
-# cause - and it is MUCH more likely than any network range collision.
+# log-opts com max-size 10m e max-file 3 e o que tem valor pratico aqui: sem
+# limite, um container que loga muito enche o disco raiz de 20 GB e derruba a
+# maquina. O sintoma e "o servidor parou", sem causa obvia - e e MUITO mais
+# provavel que qualquer colisao de faixa de rede.
 #
-# live-restore keeps containers running when the daemon restarts.
+# live-restore mantem os containers rodando quando o daemon reinicia.
 #
-# THE ADDRESS POOL WAS LEFT AT THE DOCKER DEFAULT. Version 1.0.0 pinned
-# 10.100.0.0/16 and 10.101.0.0/16; it was reverted on 2026-10-15 because the
-# justification was wrong - details in the note at the end of this file.
+# O POOL DE ENDERECOS FICOU NO PADRAO DO DOCKER. A versao 1.0.0 fixava
+# 10.100.0.0/16 e 10.101.0.0/16; foi revertido em 15/10/2026 porque a
+# justificativa estava errada - detalhes na nota ao fim deste arquivo.
 #
-# The validate phase does NOT trust the configuration: it checks that the
-# daemon actually READ the daemon.json. That is the difference between "we
-# configured it" and "it is in effect", and it is what caught a real bug in the
-# order of the steps.
+# A fase validate NAO confia na configuracao: ela confere que o daemon
+# realmente LEU o daemon.json. E a diferenca entre "configuramos" e "esta
+# valendo", e foi ela que pegou um bug real de ordem dos passos.
 
 name: docker
-description: Docker Engine with log limit and live-restore
+description: Docker Engine com limite de log e live-restore
 schemaVersion: 1.0
 
 phases:
   - name: build
     steps:
 
-      # Distribution packages that conflict with the official docker-ce.
-      # The "|| true" exists because apt-get remove of an absent package exits
-      # with a non-zero code, and in ExecuteBash that fails the whole step.
+      # Pacotes de distribuicao que conflitam com o docker-ce oficial.
+      # O "|| true" existe porque apt-get remove de pacote ausente sai com
+      # codigo diferente de zero, e no ExecuteBash isso reprova o passo todo.
       - name: RemoveConflicts
         action: ExecuteBash
         inputs:
@@ -54,26 +53,23 @@ phases:
             - install -d -m 0755 /etc/apt/keyrings
             - install -d -m 0755 /etc/docker
 
-      # ORDER: the daemon.json is written BEFORE installing docker-ce.
+      # ORDEM: o daemon.json e escrito ANTES de instalar o docker-ce.
       #
-      # WHY: "apt install docker-ce" ALREADY STARTS THE DAEMON. By writing it
-      # first, the initial startup already reads the configuration and no
-      # restart is needed.
+      # POR QUE: o "apt install docker-ce" JA SOBE O DAEMON. Escrevendo antes,
+      # a primeira subida ja le a configuracao e nao e preciso reiniciar.
       #
-      # This also avoids a class of error: configuration that only applies to
-      # resources created AFTER it takes effect does not apply to what the
-      # daemon already created. That is what brought down build 1.0.0/1, when
-      # this component still pinned default-address-pools - see the note at the
-      # end.
+      # Isso tambem evita uma classe de erro: configuracao que so vale para
+      # recursos criados DEPOIS dela passar a valer nao se aplica ao que o
+      # daemon ja criou. Foi o que derrubou a build 1.0.0/1, quando este
+      # componente ainda fixava o default-address-pools - ver a nota no fim.
       #
-      # log-opts limits the container log. It is the field that matters most
-      # here: without it, a container that logs a lot fills the 20 GB root disk
-      # and brings the machine down, with the symptom "the server stopped" and
-      # no obvious cause.
+      # log-opts limita o log de container. E o campo que mais importa aqui:
+      # sem ele, um container que loga muito enche o disco raiz de 20 GB e
+      # derruba a maquina, com sintoma "o servidor parou" sem causa obvia.
       #
-      # live-restore keeps containers running when the daemon restarts - useful
-      # on a container host, and harmless (it is only incompatible with swarm
-      # mode, which we do not use).
+      # live-restore mantem os containers rodando quando o daemon reinicia -
+      # util num host de container, e inofensivo (so e incompativel com swarm
+      # mode, que nao usamos).
       - name: ConfigureDaemon
         action: CreateFile
         inputs:
@@ -89,19 +85,19 @@ phases:
                 "live-restore": true
               }
 
-      # GPG key and repository, with CODENAME DETECTION AND FALLBACK.
+      # Chave GPG e repositorio, com DETECCAO DE CODINOME E FALLBACK.
       #
-      # Why in a single step: each ExecuteBash runs in its own shell, so a
-      # variable defined in one step does not survive into the next.
+      # Por que num passo unico: cada ExecuteBash roda num shell proprio,
+      # entao variavel definida num passo nao sobrevive para o seguinte.
       #
-      # The risk is real: THIRD-PARTY repositories often take months to publish
-      # a package for a new LTS codename. Ubuntu 26.04 is "resolute". If Docker
-      # does not yet have a channel for it, falling back to "noble" (24.04 LTS)
-      # is the standard workaround - the package is compatible, and the
-      # alternative would be the whole build failing.
+      # O risco e real e esta registrado no A24: repositorios de TERCEIROS
+      # costumam atrasar meses para publicar pacote para codinome de LTS novo.
+      # O Ubuntu 26.04 e "resolute". Se a Docker ainda nao tiver canal para
+      # ele, cair em "noble" (24.04 LTS) e o contorno padrao - o pacote e
+      # compativel, e o alternativa seria a build falhar inteira.
       #
-      # The effective codename ends up in the log, so you can tell afterwards
-      # whether the image used resolute or the fallback.
+      # O codinome efetivo fica no log, entao da para saber depois se a imagem
+      # usou resolute ou o fallback.
       - name: AddDockerRepository
         action: ExecuteBash
         inputs:
@@ -113,16 +109,16 @@ phases:
               if [ -z "$CODENAME" ]; then
                 CODENAME="$(lsb_release -cs)"
               fi
-              echo "OS codename: ${CODENAME}"
+              echo "codinome do SO: ${CODENAME}"
 
               if curl -fsI "https://download.docker.com/linux/ubuntu/dists/${CODENAME}/Release" >/dev/null 2>&1; then
-                echo "Docker channel for ${CODENAME}: exists"
+                echo "canal do Docker para ${CODENAME}: existe"
               else
-                echo "WARNING: Docker has not yet published a channel for ${CODENAME}."
-                echo "WARNING: using the noble (24.04 LTS) channel as a workaround."
+                echo "AVISO: a Docker ainda nao publicou canal para ${CODENAME}."
+                echo "AVISO: usando o canal do noble (24.04 LTS) como contorno."
                 CODENAME="noble"
               fi
-              echo "effective repository codename: ${CODENAME}"
+              echo "codinome efetivo do repositorio: ${CODENAME}"
 
               curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
                 | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
@@ -141,12 +137,12 @@ phases:
             - apt-get update -y
             - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-      # The daemon.json WAS ALREADY WRITTEN before the installation - see the
-      # note in ConfigureDaemon. Here we only ensure the service is enabled to
-      # come up on boot of the final instance.
+      # O daemon.json JA FOI ESCRITO antes da instalacao - ver a nota em
+      # ConfigureDaemon. Aqui so garantimos que o servico esta habilitado para
+      # subir no boot da instancia final.
       #
-      # There is no "restart" because it is not needed: the daemon came up for
-      # the first time already reading the correct configuration.
+      # Nao ha "restart" porque nao e preciso: o daemon subiu pela primeira vez
+      # ja lendo a configuracao correta.
       - name: EnableDocker
         action: ExecuteBash
         inputs:
@@ -154,18 +150,16 @@ phases:
             - systemctl enable docker
             - systemctl is-active docker
 
-      # We do NOT add anyone to the "docker" group here, and that is
-      # deliberate.
+      # NAO acrescentamos ninguem ao grupo "docker" aqui, e isso e deliberado.
       #
-      # Belonging to the docker group is equivalent to being root on the
-      # machine. Whoever needs to use Docker comes in through Session Manager,
-      # where the ssm-user already has sudo. Putting a user in the group in the
-      # IMAGE would grant that power to every instance created from it, forever,
-      # with no case-by-case decision.
+      # Pertencer ao grupo docker equivale a ser root na maquina. Quem precisar
+      # usar o Docker entra pelo Session Manager, onde o ssm-user ja tem sudo.
+      # Colocar usuario no grupo na IMAGEM daria esse poder a toda instancia
+      # criada dela, para sempre, sem decisao caso a caso.
 
   # -------------------------------------------------------------------------
-  # validate: runs on the BUILD instance, before taking the AMI.
-  # Failing here prevents the AMI from existing, which is what we want.
+  # validate: roda na instancia de BUILD, antes de tirar a AMI.
+  # Falhar aqui impede a AMI de existir, que e o que queremos.
   # -------------------------------------------------------------------------
   - name: validate
     steps:
@@ -184,25 +178,24 @@ phases:
           commands:
             - cat /etc/docker/daemon.json
 
-      # THE CHECK THAT MATTERS: did the daemon.json TAKE EFFECT?
+      # A CONFERENCIA QUE IMPORTA: o daemon.json SURTIU EFEITO?
       #
-      # It is not enough for the file to be written - the "cat" of the previous
-      # step would prove only that. The daemon must have READ and applied it.
+      # Nao basta o arquivo estar escrito - o "cat" do passo anterior provaria
+      # apenas isso. E preciso que o daemon tenha LIDO e aplicado.
       #
-      # It was this distinction that caught the bug in build 1.0.0/1: the file
-      # was correct on disk and the configuration was not in effect, because
-      # the daemon had come up before it existed.
+      # Foi esta distincao que pegou o bug da build 1.0.0/1: o arquivo estava
+      # correto no disco e a configuracao nao estava valendo, porque o daemon
+      # havia subido antes de ele existir.
       #
-      # ONE CHECK ONLY, ON PURPOSE. "Live Restore Enabled: true" only shows up
-      # if it came from the daemon.json - the Docker default is false. If the
-      # daemon read the file, it read the log-opts too: they are in the same
-      # file.
+      # UMA VERIFICACAO SO, DE PROPOSITO. "Live Restore Enabled: true" so
+      # aparece se veio do daemon.json - o padrao do Docker e false. Se o
+      # daemon leu o arquivo, leu o log-opts tambem: estao no mesmo arquivo.
       #
-      # Version 1.0.1 had a second step that started a container and read the
-      # LogConfig with "grep -A3". The 3-line window cut off before the
-      # max-size, and build 1.0.1/1 WAS REJECTED by mistake - the configuration
-      # was correct. A complicated checker becomes a source of failure instead
-      # of a detector. Removed.
+      # A versao 1.0.1 tinha um segundo passo que subia um container e lia o
+      # LogConfig com "grep -A3". A janela de 3 linhas cortava antes do
+      # max-size, e a build 1.0.1/1 FOI REPROVADA por engano - a configuracao
+      # estava correta. Verificador complicado vira fonte de falha em vez de
+      # detector. Removido.
       - name: ValidateDaemonTookEffect
         action: ExecuteBash
         inputs:
@@ -211,37 +204,37 @@ phases:
               set -eu
 
               if ! docker info 2>/dev/null | grep -q 'Live Restore Enabled: true'; then
-                echo "ERROR: the daemon does not have live-restore active."
-                echo "ERROR: the /etc/docker/daemon.json did not take effect."
-                echo "ERROR: likely cause - the daemon came up before the file existed."
+                echo "ERRO: o daemon nao esta com live-restore ativo."
+                echo "ERRO: o /etc/docker/daemon.json nao surtiu efeito."
+                echo "ERRO: causa provavel - o daemon subiu antes de o arquivo existir."
                 echo "--- docker info ---"
                 docker info 2>&1 || true
                 exit 1
               fi
-              echo "OK: live-restore active - the daemon.json was read and applied."
+              echo "OK: live-restore ativo - o daemon.json foi lido e aplicado."
 
-              # Informational, non-blocking: records the docker0 range for
-              # whoever may diagnose routing on this instance one day. With the
-              # Docker DEFAULT pool, the expected value is 172.17.0.0/16.
-              echo "INFO: docker0 network: $(docker network inspect bridge | grep '"Subnet"' | head -1 | cut -d'"' -f4)"
+              # Informativo, nao bloqueante: registra a faixa do docker0 para
+              # quem for diagnosticar roteamento nesta instancia um dia. Com o
+              # pool PADRAO do Docker, o esperado e 172.17.0.0/16.
+              echo "INFO: rede do docker0: $(docker network inspect bridge | grep '"Subnet"' | head -1 | cut -d'"' -f4)"
 
   # -------------------------------------------------------------------------
-  # test: runs on an instance launched from the FINISHED AMI.
-  # It is what distinguishes "image created" from "image that provably works".
+  # test: roda numa instancia lancada a partir da AMI JA PRONTA.
+  # E o que diferencia "imagem criada" de "imagem que comprovadamente funciona".
   # -------------------------------------------------------------------------
   - name: test
     steps:
-      # Requires egress on 443 for the registry. The build security group
-      # allows 443 and 80, and egress exists through the NAT.
+      # Exige saida na 443 para o registry. O security group da build libera
+      # 443 e 80, e a saida existe pelo NAT.
       - name: TestRunContainer
         action: ExecuteBash
         inputs:
           commands:
             - docker run --rm hello-world
-            - docker run --rm alpine echo "Docker working on the AMI"
+            - docker run --rm alpine echo "Docker funcional na AMI"
 
-      # Repeats the check on the final AMI. The daemon.json could have been
-      # right on the build and not survived the snapshot.
+      # Repete a conferencia na AMI final. O daemon.json podia estar certo na
+      # build e nao ter sobrevivido ao snapshot.
       - name: TestDaemonConfigOnAmi
         action: ExecuteBash
         inputs:
@@ -249,48 +242,47 @@ phases:
             - |
               set -eu
               if ! docker info 2>/dev/null | grep -q 'Live Restore Enabled: true'; then
-                echo "ERROR: the final AMI does not have live-restore active."
-                echo "ERROR: the daemon.json did not survive the snapshot."
+                echo "ERRO: a AMI final nao esta com live-restore ativo."
+                echo "ERRO: o daemon.json nao sobreviveu ao snapshot."
                 exit 1
               fi
-              echo "OK: daemon.json in effect on the final AMI."
-              echo "INFO: docker0 network: $(docker network inspect bridge | grep '"Subnet"' | head -1 | cut -d'"' -f4)"
+              echo "OK: daemon.json valendo na AMI final."
+              echo "INFO: rede do docker0: $(docker network inspect bridge | grep '"Subnet"' | head -1 | cut -d'"' -f4)"
 
 # ---------------------------------------------------------------------------
-# DECISION: the address pool was left at the Docker DEFAULT (2026-10-15)
+# DECISAO: o pool de enderecos ficou no PADRAO do Docker (15/10/2026)
 #
-# Version 1.0.0 of this component pinned default-address-pools at 10.100.0.0/16
-# and 10.101.0.0/16. It was REVERTED, and it is worth recording why - the
-# original justification was wrong.
+# A versao 1.0.0 deste componente fixava default-address-pools em 10.100.0.0/16
+# e 10.101.0.0/16. Foi REVERTIDO, e vale registrar por que - a justificativa
+# original estava errada.
 #
-# WHAT WAS CLAIMED: the Docker default pool collides with the production VPC.
+# O QUE SE DIZIA: o pool padrao do Docker colide com a VPC de producao.
 #
-# WHY THAT IS WRONG: Docker allocates starting from 172.17.0.0/16 and goes up -
-# 172.18, 172.19 ... up to 172.31 - and then moves on to 192.168.0.0/20 and
-# beyond. Production is 172.16.0.0/16, which is NOT on the allocation path.
-# Zero risk, not "intermittent".
+# POR QUE ESTA ERRADO: o Docker aloca a partir de 172.17.0.0/16 e sobe -
+# 172.18, 172.19 ... ate 172.31 - e depois passa para 192.168.0.0/20 em
+# diante. A producao e 172.16.0.0/16, que NAO esta no caminho de alocacao.
+# Risco zero, nao "intermitente".
 #
-# THE COLLISIONS THAT DO EXIST, and why they do not justify it:
-#   172.31.0.0/16 (in use) requires 15 networks created first
-#   the office 192.168.x ranges require more than 15
-# Each docker-compose project creates a network. Reaching 15 simultaneous
-# networks means dozens of stacks on the same host, which is not the case here.
+# AS COLISOES QUE EXISTEM DE FATO, e por que nao justificam:
+#   172.31.0.0/16 (em uso, ver CIDRs.txt) exige 15 redes criadas antes
+#   as faixas 192.168.x do escritorio exigem mais de 15
+# Cada projeto docker-compose cria uma rede. Chegar a 15 redes simultaneas
+# significa dezenas de stacks no mesmo host, o que nao e o caso aqui.
 #
-# And the failure mechanism is not what intuition suggests: traffic LEAVING the
-# container goes through MASQUERADE and reaches the destination with the host's
-# IP, so the container's IP never appears on the network. The problem would be
-# at the DESTINATION - a local route "172.x dev docker0" is more specific than
-# the VPC route and would capture traffic that should leave via eth0. But that
-# requires the overlap to happen, and the overlap requires the 15 networks.
+# E o mecanismo da falha nao e o que a intuicao sugere: o trafego que SAI do
+# container passa por MASQUERADE e chega ao destino com o IP do host, entao o
+# IP do container nunca aparece na rede. O problema seria de DESTINO - uma
+# rota local "172.x dev docker0" e mais especifica que a rota da VPC e
+# capturaria trafego que deveria sair pela eth0. Mas isso exige a sobreposicao
+# acontecer, e ela exige as 15 redes.
 #
-# WHAT TIPPED THE DECISION TO GO BACK TO THE DEFAULT: fewer pieces to maintain,
-# and diverging from the default has its own cost - whoever debugs routing
-# expects 172.17 and is thrown off by anything else.
+# O QUE PESOU PARA VOLTAR AO PADRAO: menos peca para manter, e divergir do
+# padrao tem custo proprio - quem for depurar roteamento espera 172.17 e
+# estranha qualquer outra coisa.
 #
-# IF YOU EVER NEED TO PIN AGAIN: the legitimate reason would be an instance
-# needing to REACH an office 192.168.x range (today the flow is the opposite,
-# office -> ALB -> instance) or a new peering with a VPC in 172.17-172.31. In
-# that case, write the daemon.json BEFORE the apt install, because
-# default-address-pools does not apply to the bridge network the daemon already
-# created.
+# SE UM DIA PRECISAR VOLTAR A FIXAR: o motivo legitimo seria uma instancia
+# precisar ALCANCAR faixa 192.168.x do escritorio (hoje o fluxo e o contrario,
+# escritorio -> ALB -> instancia) ou peering novo com VPC em 172.17-172.31.
+# Nesse caso, escrever o daemon.json ANTES do apt install, porque o
+# default-address-pools nao se aplica a rede bridge que o daemon ja criou.
 # ---------------------------------------------------------------------------

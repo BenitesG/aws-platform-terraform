@@ -1,76 +1,55 @@
 # ---------------------------------------------------------------------------
 # modules/infrastructure/main.tf
 #
-# WHERE the build runs: role, instance profile, security group and the
-# infrastructure configuration. Shared by all images.
+# ONDE a build roda: papel, instance profile, security group e a
+# infrastructure configuration. Compartilhado por todas as imagens.
 #
-# How a build works:
-#   1. you trigger the pipeline
-#   2. the Image Builder spins up a TEMPORARY EC2 instance from the parent AMI
-#   3. that instance receives the instance profile declared here
-#   4. the service sends commands into it VIA SSM - that is how the components
-#      are applied
-#   5. it shuts down, takes the AMI from the disk and destroys the instance
+# Como funciona uma build:
+#   1. voce dispara o pipeline
+#   2. o Image Builder sobe uma instancia EC2 TEMPORARIA a partir da AMI-pai
+#   3. essa instancia recebe o instance profile declarado aqui
+#   4. o servico manda comandos para dentro dela VIA SSM - e assim que os
+#      componentes sao aplicados
+#   5. desliga, tira a AMI do disco e destroi a instancia
 #
-# The role is not yours nor the Image Builder's: it belongs to a machine that
-# lives about 20 minutes and dies. That is why the instance profile is
-# required and there is no "attach later" - you never get the chance to touch
-# it.
+# O papel nao e seu nem do Image Builder: e de uma maquina que vive uns 20
+# minutos e morre. Por isso o instance profile e obrigatorio e nao existe
+# "anexar depois" - voce nunca tem a chance de tocar nela.
 #
-# TWO MANDATORY ADAPTATIONS IN THIS ACCOUNT, both absent from the team's
-# reference module:
+# DUAS ADAPTACOES OBRIGATORIAS NESTA CONTA, ambas ausentes do modulo de
+# referencia da equipe:
 #
-#   1. permissions_boundary on the role. Without it the CreateRole is DENIED,
-#      with an AccessDenied that does NOT mention the boundary
-#   2. explicit subnet and security group. The reference module omits them and
-#      falls back to the default VPC - which NO LONGER EXISTS in any region of
-#      this account
+#   1. permissions_boundary no papel. Sem ela o CreateRole e NEGADO, com um
+#      AccessDenied que NAO menciona a boundary
+#   2. subnet e security group explicitos. O modulo de referencia os omite e
+#      cai na VPC default - que NAO EXISTE mais em nenhuma regiao desta conta
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# Build instance role
+# Papel da instancia de build
 #
-# Separate from delegated-ec2-ssm (the application instances') on purpose: the
-# build machine needs permissions that an application server should not have.
-# Merging them would make every instance in the company carry permission to
-# build images.
+# Separado do delegated-ec2-ssm (das instancias de aplicacao) de proposito: a
+# maquina de build precisa de permissoes que servidor de aplicacao nao deve
+# ter. Juntar faria toda instancia da empresa carregar permissao de construir
+# imagem.
 # ---------------------------------------------------------------------------
-
-# A CHILD module declares the constraint of the provider it uses, but never a
-# provider block: the configuration - region, profile, default_tags - is
-# inherited from the root. Without this declaration the module carries no
-# compatibility contract of its own, and the constraint that applies is
-# whatever the caller happens to have. It must match the root: a divergence
-# here fails at init, on the caller's side, with a message that names the
-# module and not the cause.
-terraform {
-  required_version = ">= 1.10"
-
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
 
 resource "aws_iam_role" "this" {
-  # The "delegated-" prefix is REQUIRED, not a style convention. The
-  # DelegatedAdminBoundary only allows creating a role, instance profile and
-  # policy inside arn:aws:iam::*:role/delegated-*. Outside the prefix,
-  # CreateRole is denied.
+  # O prefixo "delegated-" e OBRIGATORIO, nao convencao de estilo. A
+  # DelegatedAdminBoundary so permite criar papel, instance profile e politica
+  # dentro de arn:aws:iam::*:role/delegated-*. Fora do prefixo, CreateRole e
+  # negado.
   name = var.role_name
 
-  # Without this line the CreateRole is DENIED. The boundary requires that
-  # every role created by delegation carry the boundary itself as a permission
-  # ceiling - this is what prevents privilege escalation by whoever holds the
-  # delegation.
+  # Sem esta linha o CreateRole e NEGADO. A boundary exige que todo papel
+  # criado por delegacao carregue ela mesma como teto de permissao - e o que
+  # impede escalada de privilegio por quem tem a delegacao.
   permissions_boundary = var.permissions_boundary_arn
 
-  description = "Role of the temporary EC2 Image Builder build instance"
+  description = "Papel da instancia temporaria de build do EC2 Image Builder"
 
-  # Half 1 of the role: WHO can wear it. Without a trust policy the role exists
-  # but nobody can use it.
+  # Metade 1 do papel: QUEM pode vesti-lo. Sem trust policy o papel existe
+  # mas ninguem consegue usar.
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -81,49 +60,49 @@ resource "aws_iam_role" "this" {
   })
 }
 
-# Half 2 of the role: WHAT it can do.
+# Metade 2 do papel: O QUE ele pode fazer.
 #
-# EC2InstanceProfileForImageBuilder: download the component definitions and
-# send logs.
+# EC2InstanceProfileForImageBuilder: baixar as definicoes dos componentes e
+# enviar logs.
 resource "aws_iam_role_policy_attachment" "imagebuilder" {
   role       = aws_iam_role.this.name
   policy_arn = "arn:aws:iam::aws:policy/EC2InstanceProfileForImageBuilder"
 }
 
-# AmazonSSMManagedInstanceCore: register the instance with SSM. Without it the
-# build sits waiting, because the service cannot run the components inside the
-# machine.
+# AmazonSSMManagedInstanceCore: registrar a instancia no SSM. Sem ela a build
+# fica parada esperando, porque o servico nao consegue executar os componentes
+# dentro da maquina.
 resource "aws_iam_role_policy_attachment" "ssm" {
   role       = aws_iam_role.this.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
-# The "hanger": a role cannot be attached directly to an EC2 instance, it has
-# to live inside an instance profile. The console creates that object
-# automatically with the same name as the role, which is why almost nobody
-# knows it exists. In Terraform it is explicit.
+# O "cabide": um papel nao pode ser anexado direto a uma instancia EC2,
+# precisa estar dentro de um instance profile. O console cria esse objeto
+# automaticamente com o mesmo nome do papel, e por isso quase ninguem sabe que
+# ele existe. Em Terraform ele e explicito.
 resource "aws_iam_instance_profile" "this" {
   name = var.instance_profile_name
   role = aws_iam_role.this.name
 }
 
 # ---------------------------------------------------------------------------
-# Build instance security group
+# Security group da instancia de build
 #
-# Dedicated, rather than reusing the acme-swe-prod-baseline-sg. Two reasons:
+# Dedicado, em vez de reaproveitar o acme-swe-prod-app01-sg. Dois motivos:
 #
-#   - separation of purpose: the application SG will GAIN an inbound rule when
-#     the integration with the legacy ERP exists, with the peering to
-#     production. The build instance has no reason to inherit that
-#   - the name now says what it is for
+#   - separacao de proposito: o SG da aplicacao vai GANHAR regra de entrada no
+#     A35, quando o peering com a producao existir. A instancia de build nao
+#     tem motivo para herdar aquilo
+#   - o nome passa a dizer a que serve
 #
-# Inbound: NONE. The build is orchestrated by SSM, which works over an
-# OUTBOUND connection from the instance itself - nothing is coming in.
+# Entrada: NENHUMA. A build e orquestrada pelo SSM, que trabalha por conexao
+# de SAIDA da propria instancia - nao ha nada entrando.
 # ---------------------------------------------------------------------------
 
 resource "aws_security_group" "this" {
   name        = var.security_group_name
-  description = "Temporary Image Builder build instance: egress only"
+  description = "Instancia temporaria de build do Image Builder: apenas saida"
   vpc_id      = var.vpc_id
 
   tags = {
@@ -131,14 +110,14 @@ resource "aws_security_group" "this" {
   }
 }
 
-# Rules as separate resources, not inline blocks.
+# Regras como recursos separados, nao blocos inline.
 #
-# With inline "ingress"/"egress", Terraform takes ownership of ALL the SG's
-# rules and removes any created outside it. As separate resources, management
-# is per rule - and the plan shows exactly which rule changes.
+# Com "ingress"/"egress" inline, o Terraform assume a posse de TODAS as regras
+# do SG e remove qualquer uma criada fora dele. Como recursos separados, a
+# gestao e por regra - e o plan mostra exatamente qual regra muda.
 resource "aws_vpc_security_group_egress_rule" "https" {
   security_group_id = aws_security_group.this.id
-  description       = "SSM, AWS API, component downloads and the Docker registry"
+  description       = "SSM, API da AWS, download de componentes e registry do Docker"
   ip_protocol       = "tcp"
   from_port         = 443
   to_port           = 443
@@ -147,7 +126,7 @@ resource "aws_vpc_security_group_egress_rule" "https" {
 
 resource "aws_vpc_security_group_egress_rule" "http" {
   security_group_id = aws_security_group.this.id
-  description       = "Ubuntu apt repositories (GPG-signed packages)"
+  description       = "Repositorios apt do Ubuntu (pacotes assinados por GPG)"
   ip_protocol       = "tcp"
   from_port         = 80
   to_port           = 80
@@ -157,15 +136,15 @@ resource "aws_vpc_security_group_egress_rule" "http" {
 # ---------------------------------------------------------------------------
 # Infrastructure configuration
 #
-# The build instance goes in the PRIVATE subnet: it only needs EGRESS (for SSM
-# and to download packages), and that egress exists through the NAT.
+# A instancia de build vai na subnet PRIVADA: so precisa de SAIDA (para o SSM
+# e para baixar pacotes), e a saida existe pelo NAT.
 # ---------------------------------------------------------------------------
 
 resource "aws_imagebuilder_infrastructure_configuration" "this" {
   name        = var.name
   description = var.description
 
-  # Required field. Takes the NAME of the instance profile, not the ARN.
+  # Campo obrigatorio. Recebe o NOME do instance profile, nao o ARN.
   instance_profile_name = aws_iam_instance_profile.this.name
 
   instance_types = var.instance_types
@@ -173,47 +152,44 @@ resource "aws_imagebuilder_infrastructure_configuration" "this" {
   subnet_id          = var.subnet_id
   security_group_ids = [aws_security_group.this.id]
 
-  # resource_tags is DIFFERENT from tags.
+  # resource_tags e DIFERENTE de tags.
   #
-  #   tags           -> tag the infrastructure configuration itself
-  #   resource_tags  -> tag the TEMPORARY build INSTANCE and its volume,
-  #                     created by the Image Builder
+  #   tags           -> taqueiam a infrastructure configuration em si
+  #   resource_tags  -> taqueiam a INSTANCIA TEMPORARIA de build e o volume
+  #                     dela, criados pelo Image Builder
   #
-  # The provider's default_tags reaches neither of these: it applies to what
-  # Terraform creates, and the build instance is created by the SERVICE.
-  # Without this, the build hours would show up in the cost report with no
-  # allocation.
+  # O default_tags do provider nao alcanca esses: ele vale para o que o
+  # Terraform cria, e a instancia de build e criada pelo SERVICO. Sem isto, as
+  # horas da build apareceriam no relatorio de custo sem alocacao.
   #
-  # The build instance's Name is NOT overridden here: the service names it
-  # "Build instance for <image>". Pinning a Name in this configuration would
-  # be worse, because it is shared across images - the same name would apply
-  # to every build.
+  # O Name da instancia de build NAO e sobrescrito aqui: o servico a nomeia
+  # como "Build instance for <imagem>". Fixar um Name nesta configuracao seria
+  # pior, porque ela e compartilhada entre imagens - o mesmo nome valeria para
+  # toda build.
   resource_tags = var.resource_tags
 
-  # true: brings the instance down if the build fails, avoiding a forgotten
-  # machine running and being billed, with the instance profile attached.
+  # true: derruba a instancia se a build falhar, evitando maquina esquecida
+  # rodando e sendo cobrada, com instance profile anexado.
   #
-  # The team's reference module uses false in the example, "for debugging". As
-  # a default it is a trap: a build that fails overnight leaves an EC2 running
-  # indefinitely. Switch to false TEMPORARILY when you need to investigate from
-  # the inside.
+  # O modulo de referencia da equipe usa false no exemplo, "para debug". Como
+  # padrao e armadilha: build que falha de madrugada deixa EC2 ligada
+  # indefinidamente. Troque para false TEMPORARIAMENTE quando precisar
+  # investigar por dentro.
   terminate_instance_on_failure = var.terminate_instance_on_failure
 
-  # Optional notification. Reuses the acme-swe-prod-alarms alarm topic when
-  # passed.
+  # Notificacao opcional. Reaproveita o topico acme-swe-prod-alarms do A22
+  # quando passado.
   sns_topic_arn = var.sns_topic_arn
 
-  # S3 logging is OPTIONAL and off by default.
+  # Log em S3 e OPCIONAL e esta desligado por padrao.
   #
-  # The Image Builder already writes the component log to CloudWatch Logs, in
-  # /aws/imagebuilder/<image-name>, with no configuration at all - and that is
-  # where the diagnosis of the builds that failed in the first cycles came
-  # from.
+  # O Image Builder ja grava o log dos componentes no CloudWatch Logs, em
+  # /aws/imagebuilder/<nome-da-imagem>, sem configuracao nenhuma - e e de la
+  # que saiu o diagnostico das builds que falharam em 14/10.
   #
-  # The team's reference module creates a bucket per infrastructure
-  # configuration with bucket_prefix, generating a name with a random suffix
-  # that does not follow acme-{scope}-{environment}-{purpose}. We prefer not to
-  # create a bucket.
+  # O modulo de referencia da equipe cria um bucket por infrastructure
+  # configuration com bucket_prefix, gerando nome com sufixo aleatorio que nao
+  # segue mb-{escopo}-{ambiente}-{finalidade}. Preferimos nao criar bucket.
   dynamic "logging" {
     for_each = var.s3_logs_bucket != null ? [1] : []
 

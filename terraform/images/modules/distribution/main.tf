@@ -1,44 +1,25 @@
 # ---------------------------------------------------------------------------
 # modules/distribution/main.tf
 #
-# Where the AMI goes and HOW IT IS TAGGED.
+# Para onde a AMI vai e COMO ELA E TAGUEADA.
 #
-# THIS MODULE DOES NOT EXIST in the team's reference repository, and the
-# example there does not pass distribution_arn to the pipeline. The
-# consequence is concrete:
+# ESTE MODULO NAO EXISTE no repositorio de referencia da equipe, e o exemplo
+# de la nao passa distribution_arn ao pipeline. A consequencia e concreta:
 #
-#   - the AMI and the snapshot are born WITHOUT the standard tags
-#   - and the image retention policy stops working, because it selects by tag
-#     (resource_selection.tag_map Application = golden-image). An image without
-#     the tag falls outside the policy and accumulates without limit, silently
+#   - a AMI e o snapshot nascem SEM as tags da norma
+#   - e a politica de retencao do A41 para de funcionar, porque ela seleciona
+#     por tag (resource_selection.tag_map Application = golden-image). Imagem
+#     sem a tag fica fora da politica e acumula sem limite, em silencio
 #
-# ami_tags is the ONLY place that tags the AMI and the snapshot. The provider's
-# default_tags reaches neither of them, because the Image Builder is the one
-# that creates them during the build, not Terraform.
+# ami_tags e o UNICO lugar que tagueia a AMI e o snapshot. O default_tags do
+# provider nao alcanca nenhum dos dois, porque quem os cria e o Image Builder
+# durante a build, nao o Terraform.
 #
-# VERIFIED IN PRACTICE: the ami_tags tags propagate ALSO to the EBS snapshot -
-# confirmed on a snapshot (snap-0123456789abcdef0), which came with all
-# thirteen tags. No extra handling is needed for the snapshot, and the earlier
-# documentation that said otherwise was wrong.
+# VERIFICADO EM 14/10/2026: as tags do ami_tags propagam TAMBEM para o
+# snapshot EBS - confirmado no snap-0a1b2c3d4e5fc0001, que veio com as treze
+# tags. Nao e preciso tratamento extra para o snapshot, e a documentacao
+# anterior que dizia o contrario estava errada.
 # ---------------------------------------------------------------------------
-
-# A CHILD module declares the constraint of the provider it uses, but never a
-# provider block: the configuration - region, profile, default_tags - is
-# inherited from the root. Without this declaration the module carries no
-# compatibility contract of its own, and the constraint that applies is
-# whatever the caller happens to have. It must match the root: a divergence
-# here fails at init, on the caller's side, with a message that names the
-# module and not the cause.
-terraform {
-  required_version = ">= 1.10"
-
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
 
 resource "aws_imagebuilder_distribution_configuration" "this" {
   name        = var.name
@@ -48,16 +29,16 @@ resource "aws_imagebuilder_distribution_configuration" "this" {
     region = var.region
 
     ami_distribution_configuration {
-      # {{ imagebuilder:buildDate }} is substituted by the service at build
-      # time, so each AMI comes out with a unique name.
+      # {{ imagebuilder:buildDate }} e substituido pelo servico no momento da
+      # build, entao cada AMI sai com nome unico.
       name = "${var.name}-{{ imagebuilder:buildDate }}"
 
-      # Standard tags plus traceability.
+      # Tags da norma mais rastreabilidade.
       #
-      # RecipeVersion and ParentImage answer "where did this AMI come from",
-      # which is the question of any future diagnosis. In the case of the
-      # stacked image, ParentImage is the AMI of our own base image - and that
-      # is how the chain becomes auditable.
+      # RecipeVersion e ParentImage respondem "de onde esta AMI veio", que e a
+      # pergunta de qualquer diagnostico futuro. No caso da imagem empilhada,
+      # ParentImage e a AMI da nossa propria imagem base - e e assim que a
+      # cadeia fica auditavel.
       ami_tags = merge(
         var.common_tags,
         {
@@ -68,12 +49,12 @@ resource "aws_imagebuilder_distribution_configuration" "this" {
         var.extra_ami_tags
       )
 
-      # Who the AMI is shared with. Empty = this account only.
+      # Com quem a AMI e compartilhada. Vazio = so esta conta.
       #
-      # Sharing across accounts would require a CMK: a snapshot encrypted with
-      # the aws/ebs managed key is NOT shareable. That is what will be needed
-      # when the images move to the future shared-services account - building
-      # here is provisional.
+      # Compartilhar entre contas exigiria CMK: snapshot criptografado com a
+      # chave gerenciada aws/ebs NAO e compartilhavel. E o que sera preciso
+      # quando as imagens mudarem para a conta de servicos compartilhados
+      # (A32) - construir aqui e provisorio.
       target_account_ids = length(var.target_account_ids) > 0 ? var.target_account_ids : null
     }
   }

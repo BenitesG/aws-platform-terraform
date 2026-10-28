@@ -1,27 +1,26 @@
 # ---------------------------------------------------------------------------
 # network-peering/main.tf
 #
-# VPC peering between acme-swe-prod (111122223333) and the production account.
-# Part of the VPC peering with production described in the internal action plan.
+# VPC peering entre acme-swe-prod (111122223333) e a conta de producao.
+# Cartoes A33 -> A34 do plano de acao.
 #
-# HALF OF THE WORK IS IN THE OTHER ACCOUNT and cannot live here: we have no
-# credentials on their side. Acceptance, the return route and "accepter DNS
-# resolution" are manual steps performed by the production account owner.
+# METADE DO TRABALHO E NA OUTRA CONTA e nao pode estar aqui: nao temos
+# credencial lado de la. Aceitacao, rota de volta e "accepter DNS resolution"
+# sao passos manuais do responsavel da conta de producao.
 #
-# EXECUTION ORDER - there are TWO applies, on purpose:
+# ORDEM DE EXECUCAO - sao DOIS applies, de proposito:
 #
-#   apply 1 (now)    : creates the peering request
-#   -> the other side ACCEPTS
-#   apply 2 (later)  : route in rt-private + DNS resolution on our side
+#   apply 1 (agora)  : cria a solicitacao de peering
+#   -> o outro lado ACEITA
+#   apply 2 (depois) : rota na rt-private + resolucao de DNS do nosso lado
 #
-# Why not everything at once: the route and the DNS options require the
-# connection to be ACTIVE. With the connection in pending-acceptance the apply
-# would fail halfway through, with the request already created and the state
-# partially applied.
+# Por que nao tudo de uma vez: rota e opcoes de DNS exigem que a conexao
+# esteja ACTIVE. Com a conexao em pending-acceptance, o apply falharia no
+# meio, com a solicitacao ja criada e o estado parcialmente aplicado.
 # ---------------------------------------------------------------------------
 
 # ===========================================================================
-# STEP 1 - the request
+# ETAPA 1 - a solicitacao
 # ===========================================================================
 
 resource "aws_vpc_peering_connection" "production" {
@@ -30,80 +29,72 @@ resource "aws_vpc_peering_connection" "production" {
   peer_vpc_id   = var.production_vpc_id
   peer_owner_id = var.production_account_id
 
-  # Same region (us-west-2), so peer_region is not declared. Declaring
-  # peer_region equal to the provider region creates an INTER-region peering
-  # and changes the cost: transfer starts being billed per GB.
+  # Mesma regiao (us-west-2), entao peer_region nao e declarado. Declarar
+  # peer_region igual a regiao do provider cria peering INTER-regiao e muda o
+  # custo: transferencia passa a ser cobrada por GB.
   #
-  # auto_accept only works when both VPCs are in the SAME account. Here the
-  # acceptance is necessarily manual, in the production account.
+  # auto_accept so funciona quando as duas VPCs estao na MESMA conta. Aqui a
+  # aceitacao e obrigatoriamente manual, na conta de producao.
   auto_accept = false
 
   tags = {
     Name = "acme-swe-prod-peering-production"
   }
 
-  # The PENDING request expires in 7 days. If it expires, Terraform will see
-  # the connection as "expired" and the next plan will propose recreating it -
-  # which is the correct behavior, but means arranging a new window with the
-  # other side.
+  # A solicitacao PENDENTE expira em 7 dias. Se expirar, o Terraform vera a
+  # conexao como "expired" e o proximo plan proporá recriar - o que e o
+  # comportamento correto, mas significa combinar nova janela com o outro lado.
   lifecycle {
     precondition {
       condition     = var.production_vpc_cidr != "10.20.0.0/16"
-      error_message = "CIDR identical to acme-swe-prod's. AWS refuses peering with overlapping CIDRs."
+      error_message = "CIDR identico ao da acme-swe-prod. A AWS recusa peering com CIDRs sobrepostos."
     }
   }
 }
 
 # ===========================================================================
-# STEP 2 - REACTIVATED ON 2026-10-16
+# ETAPA 2 - REATIVADA EM 16/10/2026
 #
-# History, because it came and went twice:
+# Historico, porque ela foi e voltou duas vezes:
 #
-#   10/15  applied for pcx-0c1c2c3c4c5c6c7c8
-#   10/16  commented out - swapping the VPC destroyed the connection
-#          (peer_vpc_id is ForceNew) and the new one was born in
-#          pending-acceptance
-#   10/16  reactivated - pcx-0b1b2b3b4b5b6b7b8 is active and accepted
+#   15/10  aplicada para a pcx-0a1b2c3d4e5f90001
+#   16/10  comentada - a troca de VPC destruiu a conexao (peer_vpc_id e
+#          ForceNew) e a nova nasceu em pending-acceptance
+#   16/10  reativada - a pcx-0a1b2c3d4e5f90002 esta active e aceita
 #
-# THE ROUTE WAS IMPORTED, NOT CREATED BY THIS CODE. It was made by hand during
-# the diagnosis of the wrong CIDR, and brought into the state with:
+# A ROTA FOI IMPORTADA, NAO CRIADA POR ESTE CODIGO. Ela foi feita a mao
+# durante o diagnostico do CIDR errado, e trazida para o estado com:
 #
-#   terraform import aws_route.to_production "rtb-0a1a2a3a4a5a6a7a8_172.31.0.0/16"
+#   terraform import aws_route.to_production "rtb-0a1b2c3d4e5f80001_172.31.0.0/16"
 #
-# WHY IMPORT AND NOT DELETE-AND-RECREATE: there is REAL TRAFFIC going through
-# this route. Import makes no call at all to AWS - it only writes the binding
-# into the state - whereas delete-and-recreate would leave a window with no
-# route.
+# POR QUE IMPORT E NAO APAGAR E RECRIAR: ha TRAFEGO REAL passando por esta
+# rota. Import nao faz chamada nenhuma na AWS - so escreve a ligacao no
+# estado -, enquanto apagar e recriar teria uma janela sem rota.
 #
-# AND WHY IMPORT INSTEAD OF LEAVING IT OUT: a route outside the state is
-# invisible to Terraform. The concrete risk: if the connection is replaced
-# again, Terraform would destroy the connection and NOT the route, leaving a
-# BLACKHOLE route pointing at a nonexistent peering - silently swallowing the
-# traffic to 172.31.0.0/16. On 10/16 the opposite happened, and it was good:
-# the route was in the state, Terraform destroyed it along with the connection
-# and the table stayed clean.
+# E POR QUE IMPORTAR EM VEZ DE DEIXAR FORA: rota fora do estado e invisivel
+# para o Terraform. O risco concreto: se a conexao for substituida outra vez,
+# ele destruiria a conexao e NAO a rota, deixando uma rota em BLACKHOLE
+# apontando para peering inexistente - engolindo em silencio o trafego para
+# 172.31.0.0/16. Em 16/10 aconteceu o oposto, e foi bom: a rota estava no
+# estado, o Terraform a destruiu junto e a tabela ficou limpa.
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
-# Outbound route: from acme-swe-prod to production.
+# Rota de ida: da acme-swe-prod para a producao.
 #
-# It goes in rt-private because that is the table explicitly associated with
-# private-c and private-d - the subnets where the instances live. rt-main is
-# left with only "local" on purpose (the main route table is left with only
-# "local" so that "forgetting to associate" fails safely) and does NOT receive
-# this route.
+# Vai na rt-private porque e ela que esta associada explicitamente a
+# private-c e private-d - as subnets onde as instancias vivem. A rt-main fica
+# so com "local" de proposito (ver decisao do A15) e NAO recebe esta rota.
 #
-# THE TABLE IS OUTSIDE TERRAFORM, AND THIS IS DELIBERATE. aws_route manages ONE
-# route inside an existing table, referenced by ID - it does not require the
-# table to be in the state. Do not confuse this EXPLICIT boundary with the
-# route having ended up outside the state, which was an accident and has just
-# been corrected.
+# A TABELA ESTA FORA DO TERRAFORM, E ISSO E DELIBERADO. O aws_route gerencia
+# UMA rota dentro de uma tabela existente, referenciada por ID - nao exige
+# que a tabela esteja no estado. Nao confundir essa fronteira EXPLICITA com a
+# rota ter ficado fora do estado, que foi acidente e acabou de ser corrigido.
 #
-# THIS ROUTE ALONE DOES NOT MAKE TRAFFIC FLOW. It needs the reciprocal route
-# (10.20.0.0/16 -> the connection) in the production account. It exists - the
-# integration has been working since 10/16 -, but it STILL NEEDS CONFIRMING in
-# which of their route tables: the main table only applies to subnets with no
-# explicit association.
+# ESTA ROTA SOZINHA NAO FAZ TRAFEGO PASSAR. Precisa da rota reciproca
+# (10.20.0.0/16 -> a conexao) na conta de producao. Ela existe - a integracao
+# esta funcionando desde 16/10 -, mas FALTA CONFIRMAR em qual route table
+# dela: tabela main so vale para subnet sem associacao explicita.
 # ---------------------------------------------------------------------------
 
 resource "aws_route" "to_production" {
@@ -113,25 +104,23 @@ resource "aws_route" "to_production" {
 }
 
 # ---------------------------------------------------------------------------
-# DNS resolution on OUR side (requester).
+# Resolucao de DNS do NOSSO lado (requester).
 #
-# By default peering does NOT resolve the other VPC's private DNS. The symptom
-# is "the host does not exist" - it looks like an application error, not a
-# network one.
+# Por padrao o peering NAO resolve o DNS privado da outra VPC. O sintoma e
+# "o host nao existe" - parece erro de aplicacao, nao de rede.
 #
-# It only matters if the integration uses a NAME instead of an IP. Today the
-# integration uses the IP directly (see erp_host_cidr in the instances/ tfvars),
-# so this is dispensable for what already works. Turning it on has no cost and
-# no side effect, and it avoids a future diagnosis if someone starts using a
-# name.
+# So importa se a integracao usar NOME em vez de IP. Hoje a integracao usa IP
+# direto (ver erp_host_cidr no tfvars de instances/), entao isto e dispensavel
+# para o que ja funciona. Ligar nao tem custo nem efeito colateral, e evita um
+# diagnostico futuro se alguem passar a usar nome.
 #
-# THIS IS THE ONLY RESOURCE THIS APPLY ACTUALLY CREATES: today the value in AWS
-# is false, because it was destroyed along with the old connection.
+# ESTE E O UNICO RECURSO QUE ESTE APPLY CRIA DE FATO: hoje o valor na AWS e
+# false, porque foi destruido junto com a conexao antiga.
 #
-# The accepter side mirrors this one and CANNOT be declared here: it would
-# require production account credentials. It is a manual step on their side
-# (Actions -> Edit DNS settings -> Accepter DNS resolution), and remains
-# pending confirmation.
+# O lado accepter e espelho deste e NAO pode ser declarado aqui: exigiria
+# credencial da conta de producao. E passo manual de la
+# (Actions -> Edit DNS settings -> Accepter DNS resolution), e continua
+# pendente de confirmacao.
 # ---------------------------------------------------------------------------
 
 resource "aws_vpc_peering_connection_options" "requester" {
@@ -143,27 +132,26 @@ resource "aws_vpc_peering_connection_options" "requester" {
 }
 
 # ===========================================================================
-# WHAT IS DELIBERATELY NOT HERE
+# O QUE DELIBERADAMENTE NAO ESTA AQUI
 #
-# The SECURITY GROUP RULES (part of the integration with the legacy ERP).
-# They depend on two answers from engineering we still do not have: who
-# initiates the connection and on which port.
+# As REGRAS DE SECURITY GROUP (cartao A35). Dependem de duas respostas da
+# engenharia que ainda nao temos: quem inicia a conexao e em qual porta.
 #
-# The peering existing does NOT make any traffic flow - the security group
-# decides that, and acme-swe-prod-baseline-sg still has empty ingress and
-# egress restricted to 443/80. That is why creating the peering now is safe.
+# O peering existir NAO faz trafego nenhum passar - quem decide isso e o
+# security group, e o acme-swe-prod-app01-sg continua com entrada vazia e
+# saida restrita a 443/80. E por isso que criar o peering agora e seguro.
 #
-# Caution with the integration with the legacy ERP: opening the integration
-# port is easy to reverse on paper and hard in practice. Once real traffic is
-# flowing, closing it breaks the integration.
+# Atencao ao A35: abrir a porta da integracao e facil de reverter no papel e
+# dificil na pratica. Depois que o trafego real estiver passando, fechar
+# derruba a integracao.
 # ===========================================================================
 
 output "peering_connection_id" {
-  description = "Hand this to the production account owner - it is what they look for to accept"
+  description = "Passar para o responsavel da conta de producao - e o que ele procura para aceitar"
   value       = aws_vpc_peering_connection.production.id
 }
 
 output "peering_status" {
-  description = "pending-acceptance until the other side accepts"
+  description = "pending-acceptance ate o outro lado aceitar"
   value       = aws_vpc_peering_connection.production.accept_status
 }

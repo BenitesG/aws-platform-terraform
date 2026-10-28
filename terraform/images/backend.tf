@@ -1,21 +1,21 @@
 # ---------------------------------------------------------------------------
-# images/backend.tf
+# imagens/backend.tf
 #
-# Where the state of this configuration is stored.
+# Onde o estado desta configuracao e guardado.
 #
-# IMPORTANT: the backend block does NOT accept variables. No var.* here - it
-# has to be a literal. This is a Terraform limitation, not a typo.
+# IMPORTANTE: o bloco backend NAO aceita variavel. Nada de var.* aqui - tem
+# que ser literal. E limitacao do Terraform, nao erro de escrita.
 #
-# The bucket must exist before the first "terraform init". Run the bootstrap/
-# directory first.
+# O bucket precisa existir antes do primeiro "terraform init". Rode o
+# diretorio bootstrap/ primeiro.
 #
-# key: the path of the file inside the bucket. The prefix lets the same bucket
-#   hold the state of several projects, each at its own path.
+# key: o caminho do arquivo dentro do bucket. O prefixo permite que o mesmo
+#   bucket guarde o estado de varios projetos, cada um no seu caminho.
 #
-# use_lockfile: locks the state using S3 itself, dispensing with DynamoDB.
-#   Without a lock, two simultaneous applies (you and the pipeline, for
-#   example) read the same state, both decide to create, and the state ends up
-#   inconsistent. Requires Terraform >= 1.10.
+# use_lockfile: trava o estado usando o proprio S3, dispensando DynamoDB.
+#   Sem trava, dois apply simultaneos (voce e a esteira, por exemplo) leem o
+#   mesmo estado, os dois decidem criar, e o estado fica inconsistente.
+#   Requer Terraform >= 1.10.
 # ---------------------------------------------------------------------------
 
 terraform {

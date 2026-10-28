@@ -3,26 +3,26 @@
 # ---------------------------------------------------------------------------
 
 output "arn" {
-  description = "Infrastructure configuration ARN, consumed by the pipeline"
+  description = "ARN da infrastructure configuration, consumido pelo pipeline"
   value       = aws_imagebuilder_infrastructure_configuration.this.arn
 }
 
 output "role_name" {
-  description = "Name of the build instance role"
+  description = "Nome do papel da instancia de build"
   value       = aws_iam_role.this.name
 }
 
 output "role_arn" {
-  description = "ARN of the build instance role"
+  description = "ARN do papel da instancia de build"
   value       = aws_iam_role.this.arn
 }
 
 output "instance_profile_name" {
-  description = "Name of the build instance's instance profile"
+  description = "Nome do instance profile da instancia de build"
   value       = aws_iam_instance_profile.this.name
 }
 
 output "security_group_id" {
-  description = "ID of the build instance security group"
+  description = "ID do security group da instancia de build"
   value       = aws_security_group.this.id
 }

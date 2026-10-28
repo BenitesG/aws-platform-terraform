@@ -13,11 +13,11 @@ mistakes, recorded inside the code itself.
 
 |  |  |
 |---|---|
-| **Terraform configurations** | 4, state isolated by blast radius |
-| **Modules written here** | 6 |
-| **Golden image lineages** | 4 — base and container host, on x86 and ARM/Graviton |
-| **EC2 hosts** | 6, all Graviton, across two environments |
-| **AWSTOE components** | 3, hand-written in YAML |
+| **Terraform configurations** | 6 states — `bootstrap`, `images`, `network-peering`, plus one per instance stack — isolated by blast radius |
+| **Modules written here** | 5, all under `images/` |
+| **Golden image lineages** | 5 — base and container host (x86 + ARM/Graviton), plus a Windows Server 2025 base |
+| **EC2 hosts** | Graviton Linux across prod/nonprod plus Windows hosts, one directory per site |
+| **AWSTOE components** | 4, hand-written in YAML (3 Linux + 1 Windows) |
 | **Network exposure** | no public IP, no port 22; inbound empty by default, exceptions always `/32` |
 | **Recurring cost** | ~US$ 36/month against a US$ 150 budget |
 
@@ -46,10 +46,10 @@ image lineage, sized to preserve rollback while dropping the snapshot ceiling
 from ~300 GB to ~200 GB. Without it the cost grows silently, with no alarm.
 
 **A pipeline that holds no credentials.** Every push validates formatting,
-syntax, language lint and policy-as-code across the four configurations —
+syntax, language lint and policy-as-code across every configuration —
 with no AWS key in a secret, in a public repository where a fork can open a
 pull request. On the first run tflint produced twelve findings and all twelve
-were real: none of the six child modules declared a provider constraint of
+were real: none of the child modules declared a provider constraint of
 its own. Fixed in the modules, not silenced in the config. Checkov's 27
 findings went the other way — none were defects, so each exception is
 recorded with its reason in `.checkov.yaml`.
@@ -79,9 +79,15 @@ terraform/images/           EC2 Image Builder
     │     └─► docker-host-x86         │  timezone, cloudwatch-agent,
     └─► acme-base-ubuntu-2604-arm64 ──┘  cleanup
           └─► docker-host-arm64
-  + 4 lifecycle policies (COUNT=2, one per lineage)
+  + Windows Server 2025 lineage (acme-base-windows-2025)
+  + 4 lifecycle policies (COUNT=2, one per Ubuntu lineage)
 
-terraform/instances/        6 × t4g (Graviton) in a private subnet
+terraform/instances/        one directory per site/stack, each with its own
+                            state — the root only indexes, it provisions nothing
+  linux-erp-site-prod/      3 × t4g (Graviton), map + for_each keyed by hostname
+  linux-erp-site-nonprod/   3 × t4g (Graviton), map + for_each keyed by hostname
+  win-app-site/             Windows Server 2025 hosts (map + for_each)
+  _templates/               skeleton to spin up a new stack without copying one
                             no public IP · no key pair by default
                             IMDSv2 required · one security group per host
                             plus one shared SG per environment for the
@@ -126,32 +132,70 @@ documented. An explicit boundary does not produce drift. An implicit one does �
 somebody changes in the console what Terraform believes it owns, and the next
 `apply` reverts it.
 
-**Separate state per configuration.** Four backends with distinct `key` values.
-A `terraform destroy` in `instances/` cannot reach the image pipeline, and
-none of them can reach the state bucket. Terraform does not validate `key`
-uniqueness: two configurations pointing at the same path will make the second
-one believe it owns the first one's resources.
+**Separate state per configuration — and now per stack inside `instances/`.**
+Each top-level configuration has its own backend `key`: `bootstrap/`, `images/`
+and `network-peering/` are one state each. `instances/` went one step further:
+it is no longer a single state with every host in it. The root directory now
+*indexes* and provisions nothing; each **site/stack** is its own directory with
+its own backend `key` — `instances/swe-prod/linux-erp-site`,
+`instances/swe-nonprod/linux-erp-site`, `instances/swe-nonprod/win-app-site`.
+A `terraform destroy` in one stack cannot reach another, cannot reach the image
+pipeline, and none of them can reach the state bucket. Terraform does not
+validate `key` uniqueness: two configurations pointing at the same path would
+make the second one believe it owns the first one's resources — so every `key`
+here is deliberate and distinct.
+
+**Why one directory per environment and stack, instead of one big state.** The
+earlier layout kept every host in a single `instances/` state as
+`module.ec2-instance["..."]`, one `.tf` file per host. It worked, but two
+problems grew with the fleet. First, **blast radius**: a mistaken `destroy` or
+a bad plan touched prod and nonprod together, because they shared one state.
+Second, **visibility**: `terraform plan`/`state list` returned every host in
+the account at once, and reading "what exactly is in production right now" meant
+filtering noise. Splitting by environment and by stack makes each `plan` show
+exactly the machines of that site and environment — prod is a directory you
+open on purpose, nonprod is another — and a change to one never renders the
+plan of the other. The cost is real and recorded: more backends to initialize
+and a `terraform state mv` across states was needed to migrate the six Linux
+hosts without recreating them. That trade bought isolation and a readable plan,
+which is what you want when the account actually runs.
+
+**Map + `for_each` keyed by hostname, not one file per host.** Inside each
+stack the machines are a single `map(object(...))` variable — `servers` —
+keyed by the OS hostname, and every resource (`aws_instance`, its security
+group, the ENI name tag, the two status alarms) is `for_each = var.servers`.
+Adding a machine to a site is now *one entry in the map*, and it is born with
+its SG, its instance, its tagged ENI and its alarms — nothing to remember to
+copy. The hostname is the map key **on purpose**: it is a stable business
+identifier, it is what enters the state address, and it must never be renamed
+in place (a renamed key is a destroy-and-create to Terraform). This is the
+practical reason the fleet is legible — one table of servers per stack, read
+top to bottom, instead of six near-identical files that drift apart.
 
 **A new file is organization; a new directory is isolation.** The criterion is
-written in `instances/main.tf`, and it is not the resource type. Splitting
-files is a human decision — Terraform concatenates every `.tf` in a directory
-before interpreting it, and the state address carries no file name, so moving a
-block between files changes nothing. A new directory means **new state**, and
-it is only justified when at least one of three things is true: a different
-blast radius (what must never be reached by an apply made for something else),
-a different cadence (images are rebuilt monthly, instances change weekly,
-peering almost never), or a different credential or owner (IAM needs the admin
-profile because of `iam:PassRole`; networking depends on another team). "One
-directory per resource type" is wrong in both directions — an instance, its
-data volume and its EIP are three types with the *same* lifecycle.
+written in `instances/README.md` and in `docs/instances-decisoes.md`, and it is
+not the resource type. Splitting files is a human decision — Terraform
+concatenates every `.tf` in a directory before interpreting it, and the state
+address carries no file name, so moving a block between files changes nothing.
+A new directory means **new state**, and it is only justified when at least one
+of three things is true: a different blast radius (prod must never be reached by
+an apply made for nonprod), a different cadence (images are rebuilt monthly,
+instances change weekly, peering almost never), or a different credential or
+owner (IAM needs the admin profile because of `iam:PassRole`; networking
+depends on another team). "One directory per resource type" is wrong in both
+directions — an instance, its data volume and its EIP are three types with the
+*same* lifecycle. The `_templates/` directory exists so a new stack starts from
+that criterion rather than from a copy of a real site, which would drag along
+another site's rules and tags.
 
 The corollary showed up in practice. Renaming a **file** costs nothing, because
-the file name never enters the state address. Renaming a **module label**
-requires a `moved` block, because there the address *is* the resource's
-identity — without it Terraform sees a new address to create and an orphan to
-destroy. On one host that meant 14 resources, including the instance with its
-in-use volume. With the block, the plan came out as
-`0 to add, 0 to change, 0 to destroy` plus 14 moves.
+the file name never enters the state address. Renaming a **module label** — or
+moving a resource between states — requires a `moved` block or
+`terraform state mv`, because there the address *is* the resource's identity:
+without it Terraform sees a new address to create and an orphan to destroy. When
+the six Linux hosts moved out of the single `instances/` state into their
+per-environment directories, that was done with `state mv`, not by letting
+Terraform destroy and recreate live instances with in-use volumes.
 
 **AMI pinned in tfvars, never `most_recent = true`.** It looks convenient and
 it is dangerous. With a dynamic data source, a new image build changes the
@@ -170,8 +214,9 @@ update the child on its own.
 **One security group per host — and the exception, documented.** Instances used
 to share a single group. The problem was not the name: **a shared security
 group is a shared rule** — opening a port for one host would open it for all of
-them. The group now lives inside the module, so "one per host" is the default
-and does not depend on anyone remembering.
+them. The group is now created per host by the stack's own `for_each` over
+`servers`, so "one per host" is the default and does not depend on anyone
+remembering.
 
 Then the integration rules forced the opposite conclusion, and that is the more
 interesting half. The rules for the legacy ERP are not a property of any one
@@ -346,7 +391,7 @@ caught three real mistakes. This was the case where it misfired.
 | [`terraform/README.md`](terraform/README.md) | conventions, tagging, access profiles, the console/code boundary |
 | [`terraform/bootstrap/`](terraform/bootstrap) | the chicken-and-egg state bucket, solved in two steps |
 | [`terraform/images/`](terraform/images) | the image factory: immutability, `create_before_destroy`, retention |
-| [`terraform/instances/`](terraform/instances) | the EC2 module, one file per host, and the network security decisions |
+| [`terraform/instances/`](terraform/instances) | one directory per site/stack, `map + for_each` keyed by hostname, and the network security decisions |
 | [`terraform/network-peering/`](terraform/network-peering) | cross-account peering and the wrong-CIDR episode |
 | [`tools/flowlog/`](tools/flowlog) | traffic forensics with duckdb, without standing up Athena |
 | [`docs/network-built-in-console.md`](docs/network-built-in-console.md) | the half of the account that is **not** in Terraform, and why |
@@ -412,7 +457,7 @@ inventory.
 - **`terraform plan` in the pipeline** depends on
   `iam:CreateOpenIDConnectProvider`, which has not been granted yet. The CI
   that exists today runs everything that needs no credentials — `fmt`,
-  `validate`, tflint and checkov across the four configurations. What is
+  `validate`, tflint and checkov across every configuration. What is
   missing is the half that reads the real state, and the alternative — a
   long-lived access key in a secret, in a public repository where a fork can
   open a pull request — is worse than the gap.

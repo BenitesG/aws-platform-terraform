@@ -3,70 +3,69 @@
 # ---------------------------------------------------------------------------
 
 variable "name" {
-  description = "Recipe name. By convention, the same as the image's."
+  description = "Nome da receita. Por convencao, igual ao da imagem."
   type        = string
 }
 
 variable "recipe_version" {
   description = <<-EOT
-    Semantic version of the recipe (e.g., "1.0.2").
+    Versao semantica da receita (ex.: "1.0.2").
 
-    It is called recipe_version and not "version" because "version" is a
-    RESERVED argument in a module block.
+    Chama-se recipe_version e nao "version" porque "version" e argumento
+    RESERVADO em bloco module.
 
-    BUMP IT BY HAND, together with the component's: the component ARN includes
-    its version, so changing a component changes the recipe - and the recipe
-    is immutable. Forgetting makes the apply change nothing and look like it
-    updated.
+    SOBE A MAO, e junto com a do componente: o ARN do componente inclui a
+    versao dele, entao mudar um componente muda a receita - e receita e
+    imovel. Esquecer faz o apply nao mudar nada e parecer que atualizou.
   EOT
   type        = string
 
   validation {
     condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.recipe_version))
-    error_message = "Use a semantic version with three numbers, for example 1.0.0."
+    error_message = "Use versao semantica com tres numeros, por exemplo 1.0.0."
   }
 }
 
 variable "parent_image" {
   description = <<-EOT
-    Source AMI.
+    AMI de origem.
 
-    THE ARCHITECTURE IS BAKED IN HERE: an x86_64 image does not run on an ARM
-    instance and vice versa.
+    A ARQUITETURA E ASSADA AQUI: imagem x86_64 nao roda em instancia ARM e
+    vice-versa.
 
-    It can be a public AMI (Canonical) or one of our golden images - that is
-    how you STACK images, which is the pattern adopted for the fleet: the
-    container host is guaranteed to be the base image plus Docker.
+    Pode ser uma AMI publica (Canonical) ou uma golden image nossa - e assim
+    que se EMPILHA imagem, que e o padrao decidido no A42: o host de container
+    e garantidamente a imagem base mais Docker.
   EOT
   type        = string
 }
 
 variable "component_arns" {
   description = <<-EOT
-    Component ARNs, IN THE ORDER OF EXECUTION.
+    ARNs dos componentes, NA ORDEM DE EXECUCAO.
 
-    The cleanup component must be the LAST.
+    O componente de limpeza deve ser o ULTIMO.
 
-    In a MANAGED component ARN, the "x.x.x" is not a placeholder: it is the
-    Image Builder syntax for "the latest version".
+    Em ARN de componente GERENCIADO, o "x.x.x" nao e placeholder: e a sintaxe
+    do Image Builder para "a versao mais recente".
   EOT
   type        = list(string)
 }
 
 variable "description" {
-  description = "What the image contains"
+  description = "O que a imagem contem"
   type        = string
   default     = null
 }
 
 variable "root_volume_size" {
-  description = "Size of the image's root disk, in GB"
+  description = "Tamanho do disco raiz da imagem, em GB"
   type        = number
   default     = 20
 }
 
 variable "root_device_name" {
-  description = "Root device name. /dev/sda1 on Ubuntu AMIs; /dev/xvda on Amazon Linux."
+  description = "Nome do dispositivo raiz. /dev/sda1 nas AMIs do Ubuntu; /dev/xvda em Amazon Linux."
   type        = string
   default     = "/dev/sda1"
 }

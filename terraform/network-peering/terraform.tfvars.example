@@ -1,47 +1,39 @@
 # ---------------------------------------------------------------------------
 # network-peering/terraform.tfvars.example
 #
-# Copy to terraform.tfvars and fill it in. The real file does NOT go to git.
+# Copie para terraform.tfvars e preencha. O arquivo real NAO vai para o git.
 # ---------------------------------------------------------------------------
 
 aws_profile = "acme-swe-prod"
 region      = "us-west-2"
 
-# --- our side ---
-# acme-swe-prod-vpc, 10.20.0.0/16
+# --- nosso lado ---
+# acme-swe-prod-vpc
 vpc_id = "vpc-xxxxxxxxxxxxxxxxx"
-# acme-swe-prod-rt-private: the table associated with the private subnets.
-# Do NOT use rt-main, which is left with only "local" on purpose, so that
-# "forgetting to associate" fails safely.
+# acme-swe-prod-rt-private: a tabela associada as subnets privadas.
+# NAO usar a rt-main, que fica so com "local" de proposito (decisao do A15).
 private_route_table_id = "rtb-xxxxxxxxxxxxxxxxx"
 
-# --- production side ---
-# 12 digits, WITHOUT hyphens. The console shows them with hyphens; the API
-# does not accept them.
+# --- lado da producao ---
+# 12 digitos, SEM hifens. O console mostra com hifens; a API nao os aceita.
 production_account_id = "000000000000"
 production_vpc_id     = "vpc-xxxxxxxxxxxxxxxxx"
-# It must NOT overlap 10.20.0.0/16 - AWS refuses the peering.
-#
-# CHECK the CIDR at the source after acceptance (AccepterVpcInfo.CidrBlock):
-# while the connection is pending-acceptance AWS returns null in that field.
-# A CIDR passed along and never verified was the root cause of the most
-# expensive error of the day - see the README, section "The CIDR was wrong".
+# NAO pode se sobrepor a 10.20.0.0/16 - a AWS recusa o peering.
 production_vpc_cidr = "172.16.0.0/16"
 
 common_tags = {
   ManagedBy = "terraform"
 
-  # Project/Application specific to THIS directory, different from the others.
-  # The Application tag describes WHAT the resource is, not the project: in
-  # images/ it is golden-image, in bootstrap/ it is terraform-state, here it is
-  # network-traffic.
+  # Project/Application proprios DESTE diretorio, diferentes dos demais.
+  # A tag Application descreve O QUE o recurso e, nao o projeto: em images/ e
+  # golden-image, em bootstrap/ e terraform-state, aqui e network-traffic.
   "acme:cost-allocation:Project"     = "infrastructure"
   "acme:cost-allocation:Application" = "network-traffic"
   "acme:cost-allocation:Department"  = "swe"
-  "acme:cost-allocation:CostCenter"  = "cc-infra-1000"
-  "acme:automation:Environment"      = "prod"
-  "acme:data:DataClassification"     = "internal"
+  "acme:cost-allocation:CostCenter"  = "h370infra"
+  "mb:automation:Environment"      = "prod"
+  "mb:data:DataClassification"     = "interno"
 
-  Owner      = "plataforma@example.com"
+  Owner      = "platform-team@acme.example"
   ChargeType = "dedicated"
 }

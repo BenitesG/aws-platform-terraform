@@ -1,19 +1,19 @@
 # ---------------------------------------------------------------------------
 # bootstrap/provider.tf
 #
-# Declares the Terraform version and the AWS provider version.
+# Declara a versao do Terraform e do provider da AWS.
 #
-# required_version: prevents someone from running with a version that is too
-#   old. The >= 1.10 is needed because the S3 backend with use_lockfile (state
-#   locking without DynamoDB) only exists from that version onward.
+# required_version: evita que alguem rode com uma versao antiga demais.
+#   O >= 1.10 e necessario porque o backend S3 com use_lockfile (trava de
+#   estado sem DynamoDB) so existe a partir dessa versao.
 #
-# required_providers: Terraform does not talk to AWS on its own. It downloads
-#   a "provider", which is the translator between the code and the AWS API.
-#   terraform init is the command that performs that download.
+# required_providers: o Terraform nao fala com a AWS por conta propria. Ele
+#   baixa um "provider", que e o tradutor entre o codigo e a API da AWS.
+#   O terraform init e o comando que faz esse download.
 #
-# ATTENTION: this directory has NO backend block on purpose. It creates the
-# bucket that will hold the state, and the state cannot live in a bucket that
-# does not exist yet. Run it with local state first; then migrate. See README.
+# ATENCAO: este diretorio NAO tem bloco backend de proposito. Ele cria o
+# bucket que vai guardar o estado, e o estado nao pode morar num bucket que
+# ainda nao existe. Roda com estado local primeiro; depois migra. Ver README.
 # ---------------------------------------------------------------------------
 
 terraform {
@@ -30,7 +30,7 @@ terraform {
 provider "aws" {
   region = "us-west-2"
 
-  # SSO profile configured in ~/.aws/config.
-  # PowerUserAccess is enough here: this directory does not create any IAM.
+  # Perfil do SSO configurado em ~/.aws/config.
+  # Aqui serve o PowerUserAccess: este diretorio nao cria nada de IAM.
   profile = "acme-swe-prod"
 }

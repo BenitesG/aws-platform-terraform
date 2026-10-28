@@ -3,11 +3,11 @@
 # ---------------------------------------------------------------------------
 
 output "arn" {
-  description = "Distribution configuration ARN, consumed by the pipeline"
+  description = "ARN da distribution configuration, consumido pelo pipeline"
   value       = aws_imagebuilder_distribution_configuration.this.arn
 }
 
 output "name" {
-  description = "Distribution configuration name"
+  description = "Nome da distribution configuration"
   value       = aws_imagebuilder_distribution_configuration.this.name
 }

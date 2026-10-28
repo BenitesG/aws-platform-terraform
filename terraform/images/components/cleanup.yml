@@ -1,111 +1,109 @@
-# Cleanup component. MUST BE THE LAST in the recipe.
+# Componente de limpeza. DEVE SER O ULTIMO da receita.
 #
-# This is not a refinement - it is a correction. The classic mistake of the
-# first golden image is capturing the snapshot with the build machine's
-# identity inside. Result: EVERY instance created from the image is born with
-# the same values.
+# Isto nao e refinamento - e correcao. O erro classico da primeira golden
+# image e capturar o snapshot com a identidade da maquina de build dentro.
+# Resultado: TODA instancia criada da imagem nasce com os mesmos valores.
 #
-#   - identical SSH host keys: the "host key changed" warning stops meaning
-#     anything and opens room for man-in-the-middle between the machines
-#   - duplicate machine-id: breaks journald and tools that identify the machine
-#     by it
-#   - populated cloud-init state: the new instance does not run the first-boot
-#     initialization
+#   - chaves de host SSH identicas: o aviso de "host key changed" deixa de
+#     significar algo e abre espaco para man-in-the-middle entre as maquinas
+#   - machine-id duplicado: quebra o journald e ferramentas que identificam a
+#     maquina por ele
+#   - estado do cloud-init preenchido: a instancia nova nao executa a
+#     inicializacao de primeiro boot
 #
-# We also take the chance to pin the SSH port.
+# Aproveitamos tambem para fixar a porta do SSH.
 
 name: cleanup
-description: Sets the SSH port and cleans identity and residue before the snapshot
+description: Define a porta do SSH e limpa identidade e residuos antes do snapshot
 schemaVersion: 1.0
 
 phases:
   - name: build
     steps:
 
-      # SSH port at 65022.
+      # Porta do SSH em 65022.
       #
-      # This changes only WHERE THE SERVER LISTENS. Connections that LEAVE the
-      # machine (git to the CI pipeline, for example) keep going to port 22 of
-      # the destination - the two things are independent.
+      # Isto muda apenas ONDE O SERVIDOR ESCUTA. Conexoes que SAEM da maquina
+      # (git para o GitLab, por exemplo) continuam indo para a porta 22 do
+      # destino - as duas coisas sao independentes.
       #
-      # 65022 is above the Linux ephemeral range (32768-60999), so there is no
-      # risk of colliding with a connection's source port.
+      # 65022 fica acima da faixa efemera do Linux (32768-60999), entao nao ha
+      # risco de colisao com porta de origem de conexao.
       #
-      # The benefit today is zero: the instances have no public IP and no
-      # inbound rule, and Session Manager does not use SSH. The gain shows up
-      # if some server ends up exposed. ATTENTION: if there is ever an inbound
-      # rule, the security group must allow 65022, not 22. And whoever uses the
-      # SSM SSH tunnel (AWS-StartSSHSession) needs to know the port.
+      # Beneficio hoje e zero: as instancias nao tem IP publico nem regra de
+      # entrada, e o Session Manager nao usa SSH. O ganho aparece se algum
+      # servidor ficar exposto. ATENCAO: se um dia houver regra de entrada, o
+      # security group precisa liberar 65022, nao 22. E quem usar o tunel SSH
+      # do SSM (AWS-StartSSHSession) precisa saber da porta.
       #
-      # TWO PLACES, and this is not redundancy:
+      # DOIS LUGARES, e isto nao e redundancia:
       #
-      # 1) sshd_config.d - applies when sshd runs as a traditional service
+      # 1) sshd_config.d - vale quando o sshd roda como servico tradicional
       #
-      # 2) ssh.socket override - STARTING WITH UBUNTU 24.04 SSH uses SOCKET
-      #    ACTIVATION, and in that mode the "Port" in sshd_config is IGNORED:
-      #    the port is decided by the systemd unit's ListenStream. Without this
-      #    override the build would pass and SSH would stay on 22, with no error
-      #    at all - a silent failure.
+      # 2) override do ssh.socket - A PARTIR DO UBUNTU 24.04 o SSH usa
+      #    ATIVACAO POR SOCKET, e nesse modo o "Port" do sshd_config e
+      #    IGNORADO: quem decide a porta e o ListenStream da unidade systemd.
+      #    Sem este override a build passaria e o SSH continuaria na 22, sem
+      #    erro nenhum - falha silenciosa.
       #
-      # The empty "ListenStream=" before the new value is not an oversight: it
-      # is the systemd idiom to CLEAR the inherited list before appending.
-      # Without it, the unit would listen on both ports.
+      # O "ListenStream=" vazio antes do valor novo nao e descuido: e o idioma
+      # do systemd para LIMPAR a lista herdada antes de acrescentar. Sem ele,
+      # a unidade escutaria nas duas portas.
       - name: SshPort
         action: ExecuteBash
         inputs:
           commands:
             - install -d -m 0755 /etc/ssh/sshd_config.d
-            - printf 'Port 65022\n' > /etc/ssh/sshd_config.d/10-acme-port.conf
+            - printf 'Port 65022\n' > /etc/ssh/sshd_config.d/10-mb-port.conf
             - install -d -m 0755 /etc/systemd/system/ssh.socket.d
-            - printf '[Socket]\nListenStream=\nListenStream=65022\n' > /etc/systemd/system/ssh.socket.d/10-acme-port.conf
+            - printf '[Socket]\nListenStream=\nListenStream=65022\n' > /etc/systemd/system/ssh.socket.d/10-mb-port.conf
             - systemctl daemon-reload
 
-      # SSH diagnostics, NON-BLOCKING.
+      # Diagnostico do SSH, NAO BLOQUEANTE.
       #
-      # History: version 1.0.0 used "sshd -t" and failed with 255. I assumed it
-      # was OpenSSH's requirement for an absolute path and fixed it to
-      # "/usr/sbin/sshd -t" in 1.0.1 - which failed with 255 just the same. The
-      # hypothesis was wrong, or incomplete.
+      # Historico: a versao 1.0.0 usava "sshd -t" e falhou com 255. Supus que
+      # fosse a exigencia de caminho absoluto do OpenSSH e corrigi para
+      # "/usr/sbin/sshd -t" na 1.0.1 - que falhou com 255 do mesmo jeito. A
+      # hipotese estava errada, ou incompleta.
       #
-      # Instead of spending more builds guessing, the commands below PRINT the
-      # diagnostics to the build log without bringing anything down. They all
-      # end in "|| true", because in ExecuteBash any command with a non-zero
-      # exit fails the whole step.
+      # Em vez de gastar mais builds adivinhando, os comandos abaixo IMPRIMEM
+      # o diagnostico no log da build sem derrubar nada. Todos terminam em
+      # "|| true", porque no ExecuteBash qualquer comando com saida diferente
+      # de zero reprova o passo inteiro.
       #
-      # Validating syntax here was zeal, not necessity: the file written has
-      # one line. If validation is desired, the right place is the TEST phase,
-      # which runs on an instance launched from the finished AMI.
+      # Validar sintaxe aqui era zelo, nao necessidade: o arquivo escrito tem
+      # uma linha. Se validacao for desejada, o lugar certo e a fase TEST, que
+      # roda numa instancia lancada a partir da AMI pronta.
       - name: DiagnoseSshd
         action: ExecuteBash
         inputs:
           commands:
-            - echo "=== binary ==="
+            - echo "=== binario ==="
             - ls -l /usr/sbin/sshd || true
-            - echo "=== version ==="
+            - echo "=== versao ==="
             - /usr/sbin/sshd -V 2>&1 || true
-            - echo "=== syntax test (expected exit 0) ==="
+            - echo "=== teste de sintaxe (exit esperado 0) ==="
             - /usr/sbin/sshd -t 2>&1 || true
-            - echo "=== exit code of the test ==="
+            - echo "=== codigo de saida do teste ==="
             - /usr/sbin/sshd -t > /dev/null 2>&1; echo "exit=$?"
-            - echo "=== host keys present ==="
+            - echo "=== chaves de host presentes ==="
             - ls -l /etc/ssh/ssh_host_* 2>&1 || true
-            - echo "=== socket activation ==="
+            - echo "=== ativacao por socket ==="
             - systemctl is-enabled ssh.socket 2>&1 || true
             - systemctl is-enabled ssh.service 2>&1 || true
-            - echo "=== effective port ==="
+            - echo "=== porta efetiva ==="
             - /usr/sbin/sshd -T 2>/dev/null | grep -i '^port' || true
 
-      # Removes the host keys. cloud-init regenerates them on the first boot of
-      # each instance, giving each machine a unique identity.
+      # Remove as chaves de host. O cloud-init regenera no primeiro boot de
+      # cada instancia, dando identidade unica a cada maquina.
       - name: RemoveSshHostKeys
         action: ExecuteBash
         inputs:
           commands:
             - rm -f /etc/ssh/ssh_host_*
 
-      # Zeroes (does not delete) the machine-id. An empty file makes systemd
-      # generate a new one on boot; a missing file causes an error in some
-      # versions.
+      # Zera (nao apaga) o machine-id. Arquivo vazio faz o systemd gerar um
+      # novo no boot; arquivo ausente causa erro em algumas versoes.
       - name: ResetMachineId
         action: ExecuteBash
         inputs:
@@ -113,7 +111,7 @@ phases:
             - truncate -s 0 /etc/machine-id
             - rm -f /var/lib/dbus/machine-id
 
-      # Makes cloud-init run from scratch on the next instance.
+      # Faz o cloud-init rodar do zero na proxima instancia.
       - name: CleanCloudInit
         action: ExecuteBash
         inputs:

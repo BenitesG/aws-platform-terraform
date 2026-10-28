@@ -1,32 +1,31 @@
 # ---------------------------------------------------------------------------
 # bootstrap/main.tf
 #
-# The bucket that holds the Terraform state.
+# O bucket que guarda o estado do Terraform.
 #
-# Note that "one bucket" is actually FIVE resources: the bucket plus four
-# configuration resources. Versioning, encryption, public access block and
-# lifecycle are not fields of the bucket: they are separate resources that
-# point to it. Older provider versions accepted everything inline, and that
-# changed - if you find an example on the internet with "versioning { }"
-# inside the aws_s3_bucket, it is outdated material.
+# Note que "um bucket" sao CINCO recursos: o bucket mais quatro de
+# configuracao. Versionamento, criptografia, bloqueio publico e lifecycle nao
+# sao campos do bucket: sao recursos separados que apontam para ele. Versoes
+# antigas do provider aceitavam tudo inline, e mudou - se encontrar exemplo na
+# internet com "versioning { }" dentro do aws_s3_bucket, e material
+# desatualizado.
 #
-# Repository convention: IDENTIFIERS IN ENGLISH, comments and tags in English
-# too.
+# Convencao do repositorio: IDENTIFICADORES EM INGLES, comentarios e tags em
+# portugues.
 # ---------------------------------------------------------------------------
 
 resource "aws_s3_bucket" "state" {
   bucket = "acme-swe-prod-tfstate"
 
-  # Prevents a "terraform destroy" from deleting the bucket that holds this
-  # configuration's own state. Without it, the destroy sabotages itself: it
-  # wipes the record in the middle of the operation and leaves orphaned
-  # resources.
+  # Impede que um "terraform destroy" apague o bucket que contem o proprio
+  # estado desta configuracao. Sem isso, o destroy se auto-sabota: apaga o
+  # registro no meio da operacao e deixa recursos orfaos.
   lifecycle {
     prevent_destroy = true
   }
 
-  # A tag key with a colon MUST be quoted in HCL. Without quotes, the parser
-  # reads "acme" as the attribute name and fails during init.
+  # Chave de tag com dois-pontos PRECISA estar entre aspas em HCL. Sem aspas,
+  # o parser le "mb" como nome do atributo e falha no init.
   tags = {
     Name      = "acme-swe-prod-tfstate"
     ManagedBy = "terraform"
@@ -34,24 +33,24 @@ resource "aws_s3_bucket" "state" {
     "acme:cost-allocation:Project"     = "best-practices"
     "acme:cost-allocation:Application" = "terraform-state"
     "acme:cost-allocation:Department"  = "swe"
-    "acme:cost-allocation:CostCenter"  = "cc-infra-1000"
-    "acme:automation:Environment"      = "prod"
+    "acme:cost-allocation:CostCenter"  = "h370infra"
+    "mb:automation:Environment"        = "prod"
 
-    # "sensitive" on purpose: the state can end up containing sensitive values
-    # in clear text if Terraform creates a resource with a secret (an RDS
-    # initial password, for example). Starting at the highest classification
-    # avoids having to remember to raise it later.
-    "acme:data:DataClassification" = "sensitive"
+    # "sensivel" de proposito: o state pode passar a conter valor sensivel em
+    # texto claro se o Terraform criar recurso com segredo (senha inicial de
+    # RDS, por exemplo). Nascer na classificacao mais alta evita precisar
+    # lembrar de subir depois.
+    "mb:data:DataClassification" = "sensivel"
 
-    Owner      = "plataforma@example.com"
+    Owner      = "platform-team@acme.example"
     ChargeType = "dedicated"
   }
 }
 
-# Versioning: every apply writes a new version of the state. If a state gets
-# corrupted, or if someone runs an improper destroy, you can restore the
-# previous version and regain control of the resources. It is Terraform's
-# undo - that is why versioning here is required, not optional.
+# Versionamento: cada apply grava uma versao nova do estado. Se um estado
+# corromper, ou se alguem rodar um destroy indevido, da para restaurar a
+# versao anterior e recuperar o controle dos recursos. E o desfazer do
+# Terraform - por isso aqui o versionamento e obrigatorio, nao opcional.
 resource "aws_s3_bucket_versioning" "state" {
   bucket = aws_s3_bucket.state.id
 
@@ -60,9 +59,8 @@ resource "aws_s3_bucket_versioning" "state" {
   }
 }
 
-# SSE-S3 (AES256), not KMS. An AWS-managed key avoids the cost and the point
-# of failure of a CMK - same reasoning as the decision about the account's
-# default EBS encryption.
+# SSE-S3 (AES256), nao KMS. Chave gerenciada pela AWS evita o custo e o ponto
+# de falha de uma CMK - mesmo raciocinio da decisao do cartao A04.
 resource "aws_s3_bucket_server_side_encryption_configuration" "state" {
   bucket = aws_s3_bucket.state.id
 
@@ -84,21 +82,20 @@ resource "aws_s3_bucket_public_access_block" "state" {
   restrict_public_buckets = true
 }
 
-# Housekeeping only: cleans up interrupted uploads, which are still billed and
-# do not show up in the normal object listing.
+# Apenas higiene: limpa upload interrompido, que fica cobrado e nao aparece
+# na listagem normal de objetos.
 #
-# Do NOT add old-version expiration here. In the flow logs bucket retention
-# makes sense because the volume grows; here each version is a few KB, and
-# deleting old versions throws away the ability to recover.
+# NAO colocar expiracao de versao antiga aqui. No bucket de flow logs a
+# retencao faz sentido porque o volume cresce; aqui cada versao tem poucos KB,
+# e apagar versao antiga joga fora a capacidade de recuperacao.
 resource "aws_s3_bucket_lifecycle_configuration" "state" {
   bucket = aws_s3_bucket.state.id
 
   rule {
-    id     = "abort-multipart-7d"
+    id     = "abortar-multipart-7d"
     status = "Enabled"
 
-    # An empty filter is not an oversight: it is how you say "applies to all
-    # objects".
+    # filter vazio nao e descuido: e como se diz "aplica a todos os objetos".
     filter {}
 
     abort_incomplete_multipart_upload {
@@ -108,55 +105,49 @@ resource "aws_s3_bucket_lifecycle_configuration" "state" {
 }
 
 # ---------------------------------------------------------------------------
-# "moved" blocks: renaming without destroying anything
+# Blocos "moved": renomeacao sem destruir nada
 #
-# These are left over from renaming the resources. The original name was
-# "bucket", which only said what the resource WAS; "state" says what it is
-# FOR. Worth the rename, and kept here as a worked example of the mechanism.
+# O nome do recurso ("estado") e a CHAVE no state. Mudar para "state" sem
+# avisar faria o Terraform concluir que o antigo foi removido e o novo precisa
+# ser criado - ou seja, tentaria DESTRUIR E RECRIAR o bucket.
 #
-# The resource name is the KEY in the state. Changing "bucket" to "state"
-# without warning would make Terraform conclude that the old one was removed
-# and the new one needs to be created - that is, it would try to DESTROY AND
-# RECREATE the bucket.
+# O bloco "moved" diz: "este recurso trocou de nome, e o mesmo objeto". O
+# proximo apply so atualiza o state, sem tocar na AWS. O plan mostra as
+# mudancas como "moved", nao como create/destroy - confira antes de aplicar.
 #
-# The "moved" block says: "this resource changed its name, it is the same
-# object". The next apply only updates the state, without touching AWS. The
-# plan shows the changes as "moved", not as create/destroy - check before
-# applying.
-#
-# After a successful apply these blocks can be removed from the file.
+# Depois do apply bem-sucedido estes blocos podem ser removidos do arquivo.
 # ---------------------------------------------------------------------------
 
 moved {
-  from = aws_s3_bucket.bucket
+  from = aws_s3_bucket.estado
   to   = aws_s3_bucket.state
 }
 
 moved {
-  from = aws_s3_bucket_versioning.bucket
+  from = aws_s3_bucket_versioning.estado
   to   = aws_s3_bucket_versioning.state
 }
 
 moved {
-  from = aws_s3_bucket_server_side_encryption_configuration.bucket
+  from = aws_s3_bucket_server_side_encryption_configuration.estado
   to   = aws_s3_bucket_server_side_encryption_configuration.state
 }
 
 moved {
-  from = aws_s3_bucket_public_access_block.bucket
+  from = aws_s3_bucket_public_access_block.estado
   to   = aws_s3_bucket_public_access_block.state
 }
 
 moved {
-  from = aws_s3_bucket_lifecycle_configuration.bucket
+  from = aws_s3_bucket_lifecycle_configuration.estado
   to   = aws_s3_bucket_lifecycle_configuration.state
 }
 
 # ---------------------------------------------------------------------------
-# outputs: values that Terraform prints at the end of the apply.
+# outputs: valores que o Terraform imprime ao final do apply.
 # ---------------------------------------------------------------------------
 
 output "state_bucket" {
-  description = "Name of the state bucket, to use in the backend block"
+  description = "Nome do bucket de estado, para usar no bloco backend"
   value       = aws_s3_bucket.state.id
 }

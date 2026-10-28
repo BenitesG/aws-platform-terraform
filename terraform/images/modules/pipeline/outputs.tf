@@ -3,11 +3,11 @@
 # ---------------------------------------------------------------------------
 
 output "arn" {
-  description = "Pipeline ARN, to trigger the build via the CLI"
+  description = "ARN do pipeline, para disparar a build pela CLI"
   value       = aws_imagebuilder_image_pipeline.this.arn
 }
 
 output "name" {
-  description = "Pipeline name"
+  description = "Nome do pipeline"
   value       = aws_imagebuilder_image_pipeline.this.name
 }

@@ -1,50 +1,49 @@
-# Bootstrap — the Terraform state bucket
+# Bootstrap — o bucket de estado do Terraform
 
-Creates the S3 bucket `acme-swe-prod-tfstate`, which holds the state of the
-other configurations in the repository.
+Cria o bucket S3 `acme-swe-prod-tfstate`, que guarda o estado das demais
+configurações do repositório.
 
-**Runs once.** After that you probably do not come back here, except to change
-something about the bucket.
-
----
-
-## Why there is a directory just for this
-
-A circular problem: the bucket that holds the state cannot be managed by the
-state that does not exist yet.
-
-The way out is to do it in **two steps** — run with local state first, then
-move the state into the freshly created bucket. The result is a
-Terraform-managed bucket whose state lives inside itself. It sounds
-paradoxical, but the ordering resolves it. It is the pattern most people use.
+**Roda uma vez.** Depois disso você provavelmente não volta aqui, a não ser
+para mudar algo no bucket.
 
 ---
 
-## Running it
+## Por que existe um diretório só para isto
+
+Problema circular: o bucket que guarda o estado não pode ser gerenciado pelo
+estado que ainda não existe.
+
+A saída é fazer em **dois passos** — rodar com estado local primeiro, depois
+mover o estado para dentro do bucket recém-criado. O resultado é um bucket
+gerenciado por Terraform cujo estado mora dentro dele próprio. Parece
+paradoxal, mas a ordem resolve. É o padrão que a maioria usa.
+
+---
+
+## Execução
 
 ```powershell
 $env:AWS_PROFILE = "acme-swe-prod"
 cd bootstrap
 ```
 
-### Step 1 — local state
+### Passo 1 — estado local
 
-This directory **has no** `backend` block at this moment, on purpose.
+Este diretório **não tem** bloco `backend` neste momento, de propósito.
 
 ```powershell
-terraform init      # no backend: state stays LOCAL
-terraform plan      # check: 5 to add
+terraform init      # sem backend: estado fica LOCAL
+terraform plan      # confira: 5 to add
 terraform apply
 ```
 
-It is worth opening the `terraform.tfstate` that appeared in the folder and
-taking a look. It is Terraform's "job logbook": the link between the name you
-gave in the code and the real object on AWS. Seeing the contents is clearer
-than any explanation.
+Vale abrir o `terraform.tfstate` que apareceu na pasta e dar uma olhada. É o
+"caderno de obra" do Terraform: a ligação entre o nome que você deu no código
+e o objeto real na AWS. Ver o conteúdo esclarece mais que explicação.
 
-### Step 2 — migrate to the bucket
+### Passo 2 — migrar para o bucket
 
-Create `backend.tf`:
+Crie `backend.tf`:
 
 ```hcl
 terraform {
@@ -59,12 +58,12 @@ terraform {
 ```
 
 ```powershell
-terraform init -migrate-state    # answer "yes"
-terraform plan                   # must say "No changes"
+terraform init -migrate-state    # responda "yes"
+terraform plan                   # tem de dizer "No changes"
 ```
 
-The `No changes` is the proof that the new state is intact and Terraform
-managed to read from S3. Only then delete the local leftovers:
+O `No changes` é a prova de que o estado novo está íntegro e o Terraform
+conseguiu ler do S3. Só então apague o resíduo local:
 
 ```powershell
 Remove-Item terraform.tfstate, terraform.tfstate.backup -ErrorAction SilentlyContinue
@@ -72,62 +71,60 @@ Remove-Item terraform.tfstate, terraform.tfstate.backup -ErrorAction SilentlyCon
 
 ---
 
-## What you need to know
+## O que você precisa saber
 
-### "One bucket" is five resources
+### "Um bucket" são cinco recursos
 
-Versioning, encryption, public access block and lifecycle **are not fields of
-the bucket**: they are separate resources that point to it. Terraform mirrors
-the S3 API, where `CreateBucket`, `PutBucketVersioning`, `PutBucketEncryption`,
-`PutPublicAccessBlock` and `PutBucketLifecycleConfiguration` are distinct
-operations. The console's single form hides this.
+Versionamento, criptografia, bloqueio público e lifecycle **não são campos do
+bucket**: são recursos separados que apontam para ele. O Terraform espelha a
+API do S3, onde `CreateBucket`, `PutBucketVersioning`, `PutBucketEncryption`,
+`PutPublicAccessBlock` e `PutBucketLifecycleConfiguration` são operações
+distintas. O formulário único do console esconde isso.
 
-If you find an example on the internet with `versioning { }` inside the
-`aws_s3_bucket`, it is old material — the provider changed.
+Se encontrar exemplo na internet com `versioning { }` dentro do
+`aws_s3_bucket`, é material antigo — o provider mudou.
 
-### The `backend` block does not accept variables
+### O bloco `backend` não aceita variável
 
-No `var.*` there. It has to be a literal. It is a Terraform limitation.
+Nada de `var.*` ali. Tem de ser literal. É limitação do Terraform.
 
-And it **does not inherit** the `profile` from the `provider` block: it is
-initialized earlier, with its own credential chain. Hence the `AWS_PROFILE`
-environment variable.
+E ele **não herda** o `profile` do bloco `provider`: é inicializado antes, com
+a própria cadeia de credenciais. Daí a variável de ambiente `AWS_PROFILE`.
 
-### `use_lockfile` requires Terraform >= 1.10
+### `use_lockfile` exige Terraform >= 1.10
 
-Locks the state using S3 itself, dispensing with DynamoDB. On an earlier
-version, switch to `dynamodb_table` and create the table.
+Trava o estado usando o próprio S3, dispensando DynamoDB. Em versão anterior,
+trocar por `dynamodb_table` e criar a tabela.
 
-The lock prevents two simultaneous `apply` runs — you and the CI pipeline, for
-example — from reading the same state, both deciding to create, and leaving the
-state inconsistent.
+A trava evita que dois `apply` simultâneos — você e a esteira, por exemplo —
+leiam o mesmo estado, os dois decidam criar, e o estado fique inconsistente.
 
-### Versioning here is required
+### O versionamento aqui é obrigatório
 
-Every `apply` writes a new version of the state. If a state gets corrupted, or
-if someone runs an improper `destroy`, you can restore the previous version and
-regain control of the resources. **It is Terraform's undo.**
+Cada `apply` grava uma versão nova do estado. Se um estado corromper, ou se
+alguém rodar um `destroy` indevido, dá para restaurar a versão anterior e
+recuperar o controle dos recursos. **É o desfazer do Terraform.**
 
-That is why there is **no** old-version expiration rule on this bucket, unlike
-the flow logs bucket. Each version is a few KB, and deleting old versions would
-throw away the ability to recover.
+Por isso **não** há regra de expiração de versão antiga neste bucket, ao
+contrário do bucket de flow logs. Cada versão tem poucos KB, e apagar versão
+antiga jogaria fora a capacidade de recuperação.
 
-### `prevent_destroy` on the bucket
+### `prevent_destroy` no bucket
 
-Prevents a `terraform destroy` from deleting the bucket that holds this
-configuration's own state — the destroy would sabotage itself, wiping the
-record in the middle of the operation and leaving orphaned resources.
+Impede que um `terraform destroy` apague o bucket que contém o próprio estado
+desta configuração — o destroy se auto-sabotaria, apagando o registro no meio
+da operação e deixando recursos órfãos.
 
-### `moved` blocks
+### Blocos `moved`
 
-There are `moved` blocks in `main.tf`, left over from renaming the identifiers
-from Portuguese to English. They tell Terraform "this resource changed its
-name, it is the same object" — without them Terraform would conclude that the
-old one was removed and would try to **destroy and recreate** the bucket.
+Há blocos `moved` no `main.tf`, remanescentes da renomeação dos
+identificadores de português para inglês. Eles dizem ao Terraform "este
+recurso trocou de nome, é o mesmo objeto" — sem eles o Terraform concluiria
+que o antigo foi removido e tentaria **destruir e recriar** o bucket.
 
-**They can be removed**, since the `apply` that consumed them was successful.
-They were kept as an example of the mechanism.
+**Podem ser removidos**, já que o `apply` que os consumiu foi bem-sucedido.
+Ficaram como exemplo do mecanismo.
 
-### The bucket is not in `.gitignore`, the state is
+### O bucket não está no `.gitignore`, o estado está
 
-`*.tfstate` and `*.tfvars` never go to git. The `.terraform.lock.hcl` does.
+`*.tfstate` e `*.tfvars` nunca vão para o git. O `.terraform.lock.hcl` vai.

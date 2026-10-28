@@ -1,0 +1,195 @@
+# Componente do EC2 Image Builder - BASE WINDOWS.
+#
+# Um componente e uma receita de passos. As fases possiveis sao:
+#   build     - executa durante a construcao da imagem
+#   validate  - verifica a imagem antes de criar a AMI
+#   test      - executa numa instancia lancada a partir da AMI pronta
+#
+# ---------------------------------------------------------------------------
+# VERSAO 1.0.0 - imagem base Windows Server para a equipe legacy ERP, 23/10/2026.
+#
+# O QUE ESTA IMAGEM E: SO somente. SEM App, SEM SQL Server - a instalacao do
+# software e feita pela equipe legacy ERP na maquina ja entregue. Esta imagem entrega
+# o Windows Server 2025 com patch aplicado, RDP habilitado e firewall
+# confirmado ligado. Serve as 7 VMs do site SITE-A (App): elas diferem em
+# hostname, papel e tamanho do disco E: - tudo de INSTANCIA. O SO e identico,
+# e por isso UMA imagem serve as sete.
+#
+# O QUE NAO ESTA AQUI, de proposito, porque NAO e imagem:
+#   - disco E: para o App         -> e ebs_block_device da INSTANCIA
+#   - IP fixo e resolucao de nomes  -> e rede, por instancia
+#   - usuario admin local entregue  -> e SEGREDO, nao vai em imagem nem em .tf
+#   - regras de firewall (DCIM, App) -> a legacy ERP cria; aqui so confirmamos ligado
+#   - snapshot "SO limpo" pos-entrega -> e por VM, depois de pronta (A29)
+# Ver o README do diretorio e a conversa de 23/10.
+#
+# IDIOMA INGLES: NAO e passo deste componente. Vem da escolha da AMI-PAI, a
+# Windows_Server-2025-English-Full-Base da AWS. Forcar idioma por componente
+# seria reconfiguracao de locale propensa a erro para um resultado que a
+# AMI-pai ja entrega de graca.
+#
+# ---------------------------------------------------------------------------
+# POWERSHELL, NAO BASH. E o AWSTOE de Windows NAO valida no WSL - diferente do
+# fluxo Linux desta conta. A validacao local do componente Windows exige
+# instancia Windows; a primeira build costuma achar erro de sintaxe que so
+# aparece la. Contar com 15-25 min por iteracao.
+#
+# ExecutePowerShell REPROVA O PASSO se o exit code for diferente de zero OU se
+# houver erro nao tratado. Em Windows, muitos comandos lancam excecao em vez
+# de retornar codigo - por isso cada bloco abre com
+# $ErrorActionPreference = 'Stop', que faz qualquer erro parar o script em vez
+# de seguir silenciosamente. As validacoes ainda dao exit 1 explicito na
+# condicao de falha, para a mensagem ficar no log da build.
+# ---------------------------------------------------------------------------
+
+name: windows-base
+description: Base Windows Server para a legacy ERP - Windows Update, RDP habilitado, firewall confirmado
+schemaVersion: 1.0
+
+phases:
+  - name: build
+    steps:
+
+      # -------------------------------------------------------------------
+      # Windows Update.
+      #
+      # ACAO: UpdateOS, nativa do AWSTOE e suportada em Linux E Windows.
+      #
+      # CORRIGIDO EM 23/10: a 1.0.0 usava "action: WindowsUpdate", que NAO
+      # EXISTE - a build falhou na criacao do componente com "Unsupported
+      # action WindowsUpdate for os platform windows". Eu tinha presumido o
+      # nome da acao em vez de verificar. UpdateOS e o nome real; a alternativa
+      # seria o componente gerenciado "update-windows" na receita, como os
+      # "update-linux" das linhagens Ubuntu - preferido manter aqui, num
+      # componente so.
+      #
+      # A AMI-pai ja vem com o patch da data dela, entao isto aplica o que saiu
+      # DESDE a publicacao. UpdateOS sem "include"/"exclude" aplica todos os
+      # updates disponiveis; a filtragem fina por categoria nao e exposta como
+      # era no nome errado anterior - para um SO base, aplicar tudo e o que a
+      # entrega quer.
+      #
+      # UpdateOS pode REINICIAR a maquina. O AWSTOE trata o reboot e retoma a
+      # execucao - por isso a conferencia de estado foi para a fase test, no
+      # produto ja estabilizado (ver la).
+      # -------------------------------------------------------------------
+      - name: WindowsUpdate
+        action: UpdateOS
+
+      # -------------------------------------------------------------------
+      # RDP habilitado.
+      #
+      # A AMI da AWS ja vem com RDP, mas afirmamos de forma idempotente, porque
+      # a entrega depende disso e nao queremos presumir. Duas coisas:
+      #   - fDenyTSConnections = 0 habilita a conexao
+      #   - a regra de GRUPO "Remote Desktop" no firewall precisa estar ativa,
+      #     senao RDP habilitado no SO e bloqueado na borda
+      #
+      # ATENCAO sobre a ORIGEM: habilitar RDP NAO abre caminho de rede sozinho.
+      # O acesso "a partir da rede interna da legacy ERP" depende do security group da
+      # INSTANCIA e da rota do peering - isso e feito por instancia, nao aqui.
+      # Aqui so garantimos que o SO aceita RDP quando a rede permitir chegar.
+      # -------------------------------------------------------------------
+      - name: HabilitarRDP
+        action: ExecutePowerShell
+        inputs:
+          commands:
+            - |
+              $ErrorActionPreference = 'Stop'
+              Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0
+              Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'
+              Write-Host 'RDP habilitado e regra de grupo Remote Desktop ativa'
+
+      # RESOLUCAO 1920x1080: NAO HA PASSO, e isto e decisao, nao esquecimento.
+      #
+      # A VM nao tem monitor fisico. A resolucao de uma sessao RDP e definida
+      # pelo CLIENTE que conecta (o mstsc da legacy ERP pede a resolucao dele), nao
+      # pelo servidor. Nao existe chave de registro limpa que FORCE 1080p do
+      # lado do servidor para uma sessao interativa comum - as que existem
+      # mexem em RemoteFX/RemoteApp, que e outra coisa.
+      #
+      # A versao 1.0.0 tinha um passo que escrevia
+      # fEnableRemoteFXAdvancedRemoteApp "para resolucao", e era FALSO: aquela
+      # chave nao controla resolucao. Removido - configurador decorativo que
+      # parece fazer algo e nao faz e a mesma armadilha do verificador
+      # complicado.
+      #
+      # ENTREGA PRATICA: 1920x1080 se configura no cliente RDP da legacy ERP, na aba
+      # Display do mstsc. Registrar isso na entrega, nao na imagem.
+
+  - name: validate
+    steps:
+
+      # A CHECAGEM E SIMPLES DE PROPOSITO - mesma licao do componente Linux:
+      # das tres falhas de build do Docker, duas foram o proprio verificador.
+      # Aqui cada passo PROVA UM EFEITO deterministico e nada mais.
+      #
+      # So fica na VALIDATE o que e deterministico DURANTE a build. O firewall
+      # foi para a TEST - ver a nota la.
+
+      - name: ConferirRDP
+        action: ExecutePowerShell
+        inputs:
+          commands:
+            - |
+              $ErrorActionPreference = 'Stop'
+              $v = (Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections').fDenyTSConnections
+              if ($v -ne 0) { Write-Error "RDP nao habilitado: fDenyTSConnections=$v"; exit 1 }
+              Write-Host 'OK: RDP habilitado'
+
+  - name: test
+    steps:
+
+      # CONFERIR O FIREWALL AQUI, NA TEST, NAO NA VALIDATE - decidido em 23/10.
+      #
+      # POR QUE A TEST E NAO A VALIDATE: a fase test roda numa instancia
+      # lancada a partir da AMI JA PRONTA, depois do Sysprep, no primeiro boot
+      # real - exatamente como a VM vai nascer para a legacy ERP. A validate roda na
+      # maquina de build, ANTES do snapshot, enquanto o Windows Update ainda
+      # pode reiniciar e mexer em estado. Medir o firewall na test e medir o
+      # PRODUTO ACABADO, nao a maquina no meio da poeira.
+      #
+      # O Start-Sleep da o tempo de o primeiro boot assentar antes de medir. E
+      # a ideia que elimina a chance de falso positivo: em vez de arriscar
+      # pegar um perfil em transicao e reprovar 60 min de build por nada, a
+      # gente so olha depois que o sistema estabilizou. Mantem o BLOQUEIO (a
+      # garantia que a legacy ERP exige) sem a fragilidade de tempo.
+      #
+      # 60 segundos e folga suficiente para o boot de um Windows Server que ja
+      # terminou Update e Sysprep; nao e o boot longo da primeira vez.
+      - name: AguardarEstabilizar
+        action: ExecutePowerShell
+        inputs:
+          commands:
+            - Start-Sleep -Seconds 60
+
+      # O FIREWALL JA VEM LIGADO na AMI da AWS, nos tres perfis. Nao ligamos -
+      # CONFERIMOS, porque a entrega exige a garantia e porque a legacy ERP vai criar
+      # regras (DCIM 8888/9999/49320, portas App) contando com ele ligado. Se
+      # algum perfil estiver desligado no produto final, a build REPROVA.
+      - name: ConferirFirewall
+        action: ExecutePowerShell
+        inputs:
+          commands:
+            - |
+              $ErrorActionPreference = 'Stop'
+              $off = Get-NetFirewallProfile | Where-Object { -not $_.Enabled }
+              if ($off) {
+                $nomes = ($off | ForEach-Object { $_.Name }) -join ', '
+                Write-Error "Perfil de firewall desligado: $nomes"
+                exit 1
+              }
+              Write-Host 'OK: firewall ligado nos tres perfis (Domain, Private, Public)'
+
+      # RDP reconferido TAMBEM na test, pelo mesmo motivo: provar que o estado
+      # sobreviveu ao Sysprep e ao primeiro boot, nao so que foi escrito na
+      # build. Barato, e fecha a garantia no produto acabado.
+      - name: ConferirRDPNoProdutoFinal
+        action: ExecutePowerShell
+        inputs:
+          commands:
+            - |
+              $ErrorActionPreference = 'Stop'
+              $v = (Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections').fDenyTSConnections
+              if ($v -ne 0) { Write-Error "RDP nao sobreviveu ao Sysprep: fDenyTSConnections=$v"; exit 1 }
+              Write-Host 'OK: RDP habilitado no produto final'

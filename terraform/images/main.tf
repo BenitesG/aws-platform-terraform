@@ -1,53 +1,50 @@
 # ---------------------------------------------------------------------------
 # images/main.tf
 #
-# Public parent AMI and our OWN COMPONENTS, shared across recipes.
+# AMI-pai publica e os COMPONENTES proprios, compartilhados entre receitas.
 #
-# Directory map:
-#   main.tf (this one)  parent AMI and components
-#   infrastructure.tf   where the build runs (IAM, SG, infrastructure config)
-#   images.tf           the four lineages: base and container host, x86 and arm64
-#   variables.tf        variable declarations (values in the tfvars)
-#   outputs.tf          ARNs to trigger the builds
-#   lifecycle.tf        retention - ACTIVE, 4 policies (one per lineage)
-#   components/         the AWSTOE documents in YAML
-#   modules/            component, recipe, distribution, infrastructure, pipeline
+# Mapa do diretorio:
+#   main.tf (este)      AMI-pai e componentes
+#   infrastructure.tf   onde a build roda (IAM, SG, infrastructure config)
+#   images.tf           as linhagens de imagem: base, docker-host e base arm64
+#   moved.tf            refatoracao: diz ao Terraform que os recursos
+#                       trocaram de endereco, nao de identidade
+#   outputs.tf          ARNs para disparar as builds
+#   lifecycle.tf        retencao - ATIVA, 3 politicas (uma por linhagem)
 # ---------------------------------------------------------------------------
 
-# "data" creates nothing: it only READS information that already exists in AWS.
-# Here it reads the ID of the official Ubuntu AMI that Canonical publishes in a
-# public SSM parameter, which makes the reference follow the image's
-# republication.
+# "data" nao cria nada: apenas LE uma informacao existente na AWS. Aqui le o
+# ID da AMI oficial do Ubuntu que a Canonical publica num parametro publico do
+# SSM, o que faz a referencia acompanhar a republicacao da imagem.
 #
-# The architecture is in the parameter's PATH. Defined default: amd64. For
-# Graviton it would be ".../arm64/hvm/ebs-gp3/ami-id" - and the resulting image
-# would NOT run on a t3a instance, because the architecture is baked into the
-# AMI.
+# A arquitetura esta no CAMINHO do parametro. Padrao definido: amd64. Para
+# Graviton seria ".../arm64/hvm/ebs-gp3/ami-id" - e a imagem resultante NAO
+# rodaria em instancia t3a, porque a arquitetura e assada na AMI.
 #
-# IF THIS data source ERRORS, the parameter path may have changed. Workaround:
-# replace it with a variable holding the AMI ID.
-# "data" creates nothing: it only READS information that already exists in AWS.
-# Here it reads the ID of the official Ubuntu AMI that Canonical publishes in a
-# public SSM parameter.
+# SE DER ERRO neste data source, o caminho do parametro pode ter mudado.
+# Contorno: trocar por uma variavel com o ID da AMI.
+# "data" nao cria nada: apenas LE uma informacao existente na AWS. Aqui le o
+# ID da AMI oficial do Ubuntu que a Canonical publica num parametro publico do
+# SSM.
 #
-# ATTENTION: THIS DOES NOT FEED THE RECIPES.
+# ATENCAO: ISTO NAO ALIMENTA AS RECEITAS.
 #
-# The parameter points to "the CURRENT one" and changes on its own when
-# Canonical republishes - on 2026-10-16 that happened at 03:20. Since
-# parent_image is ForceNew in an Image Builder recipe, using this value
-# directly made Terraform want to REPLACE the recipes on every republication,
-# with no one having changed anything. And the replacement would FAIL, because
-# a recipe referenced by an already-built image cannot be removed.
+# O parametro aponta para "a ATUAL" e muda sozinho quando a Canonical
+# republica - em 16/10/2026 isso aconteceu as 03:20. Como parent_image e
+# ForceNew numa receita do Image Builder, usar este valor direto fazia o
+# Terraform querer SUBSTITUIR as receitas a cada republicacao, sem ninguem ter
+# mudado nada. E a substituicao FALHARIA, porque receita referenciada por
+# imagem ja construida nao pode ser removida.
 #
-# The recipes use var.base_parent_ami_amd64 and var.base_parent_ami_arm64,
-# pinned in the tfvars. These data sources serve to CONSULT which one is
-# current when you want to update deliberately - see the outputs
-# parent_ami_ubuntu_disponivel and parent_ami_ubuntu_arm64_disponivel.
+# As receitas usam var.base_parent_ami_amd64 e var.base_parent_ami_arm64,
+# fixas no tfvars. Estes data sources servem para CONSULTAR qual e a atual
+# quando se quiser atualizar deliberadamente - ver os outputs
+# parent_ami_ubuntu_disponivel e parent_ami_ubuntu_arm64_disponivel.
 #
-# The architecture is in the parameter's PATH. Defined default: amd64.
+# A arquitetura esta no CAMINHO do parametro. Padrao definido: amd64.
 #
-# IF IT ERRORS here, the parameter path may have changed. Since it no longer
-# feeds anything critical, it can be removed without breaking the recipes.
+# SE DER ERRO aqui, o caminho do parametro pode ter mudado. Como ele nao
+# alimenta mais nada critico, dá para remover sem quebrar as receitas.
 data "aws_ssm_parameter" "ubuntu" {
   name = "/aws/service/canonical/ubuntu/server/${var.ubuntu_version}/stable/current/${var.architecture}/hvm/ebs-gp3/ami-id"
 }
@@ -57,45 +54,44 @@ data "aws_ssm_parameter" "ubuntu_arm64" {
 }
 
 # ---------------------------------------------------------------------------
-# Our own components
+# Componentes proprios
 #
-# One component per module. Shared across the recipes: acme-cleanup runs on
-# both lineages, and it is always the LAST in the list.
+# Um componente por modulo. Compartilhados entre as receitas: o mb-cleanup
+# roda nas duas linhagens, e e sempre o ULTIMO da lista.
 #
-# VALIDATE THE YAML LOCALLY before the apply - a build costs 15 to 25 minutes
-# to find a syntax error:
+# VALIDE O YAML LOCALMENTE antes do apply - uma build custa 15 a 25 minutos
+# para descobrir erro de sintaxe:
 #   ./awstoe validate --documents components/docker.yml
 # ---------------------------------------------------------------------------
 
 module "component_timezone" {
   source = "./modules/component"
 
-  name = "acme-timezone"
+  name = "mb-timezone"
 
-  # NO description, and this is NOT an oversight.
+  # SEM description, e isto NAO e esquecimento.
   #
-  # In aws_imagebuilder_component the description is also ForceNew, because a
-  # component is immutable. The component that exists today was created without
-  # a description: adding one REPLACES it, which changes its ARN - and the
-  # component ARN is part of the recipe, so the base recipe would be replaced
-  # in cascade and would fail with ResourceDependencyException.
+  # Em aws_imagebuilder_component a descricao tambem e ForceNew, porque
+  # componente e imutavel. O componente que existe hoje foi criado sem
+  # descricao: acrescentar uma o SUBSTITUI, o que muda o ARN dele - e o ARN do
+  # componente faz parte da receita, entao a receita base seria substituida em
+  # cascata e falharia com ResourceDependencyException.
   #
-  # Discovered in the plan of this refactor, which flagged "forces
-  # replacement".
+  # Descoberto no plan desta refatoracao, que acusou "forces replacement".
   #
-  # NOTE: the version was bumped to 1.0.1 and, therefore, the component IS
-  # being replaced in this cycle. Even so the description stays out, on purpose
-  # - adding it now brings nothing and would make the diff larger for no
-  # reason. The place to record what the component does is the YAML, which has
-  # the full diagnosis at the top.
+  # NOTA DE 19/10: a versao subiu para 1.0.1 e, portanto, o componente ESTA
+  # sendo substituido neste ciclo. Mesmo assim a description continua fora, de
+  # proposito - acrescenta-la agora nao traz nada e tornaria o diff maior sem
+  # necessidade. O lugar de registrar o que o componente faz e o YAML, que tem
+  # o diagnostico completo no topo.
 
-  # 1.0.1 - adds the AWS time source (169.254.169.123) and removes Canonical's
-  # NTS pools, which require TCP 4460 and are unreachable with egress
-  # restricted to 443/80. Full diagnosis in components/timezone.yml.
+  # 1.0.1 - acrescenta a fonte de tempo da AWS (169.254.169.123) e remove os
+  # pools NTS da Canonical, que exigem TCP 4460 e sao inalcancaveis com a saida
+  # restrita a 443/80. Diagnostico completo em components/timezone.yml.
   #
-  # BUMPING THIS VERSION FORCES bumping the recipe_version of the lineages that
-  # consume it - base x86 and base arm64. The children inherit it through the
-  # parent image and do not need to be touched.
+  # SUBIR ESTA VERSAO OBRIGA a subir o recipe_version das linhagens que o
+  # consomem - base x86 e base arm64. As filhas herdam pela imagem-pai e nao
+  # precisam ser tocadas.
   component_version = "1.0.1"
 
   data = file("${path.module}/components/timezone.yml")
@@ -104,25 +100,24 @@ module "component_timezone" {
 module "component_cleanup" {
   source = "./modules/component"
 
-  name = "acme-cleanup"
+  name = "mb-cleanup"
 
-  # No description, for the same reason as timezone: it would be a cascade
-  # replace.
+  # Sem description, pelo mesmo motivo do timezone: seria replace em cascata.
 
-  # 1.0.2: the sshd validation became a NON-BLOCKING diagnostic.
-  #   1.0.0 failed on "sshd -t" with 255; I assumed it required an absolute path
-  #   1.0.1 failed on "/usr/sbin/sshd -t" with 255 - wrong hypothesis
-  #   1.0.2 prints the diagnostic to the log without bringing the build down
+  # 1.0.2: a validacao do sshd virou diagnostico NAO BLOQUEANTE.
+  #   1.0.0 falhou em "sshd -t" com 255; supus exigencia de caminho absoluto
+  #   1.0.1 falhou em "/usr/sbin/sshd -t" com 255 - hipotese errada
+  #   1.0.2 imprime o diagnostico no log sem derrubar a build
   #
-  # The real cause was environmental: /run is tmpfs and /run/sshd only exists
-  # when the service comes up - and ssh.service is DISABLED because of socket
-  # activation. It was not a configuration error.
+  # A causa real era ambiental: /run e tmpfs e /run/sshd so existe quando o
+  # servico sobe - e o ssh.service esta DESABILITADO por causa da ativacao por
+  # socket. Nao era erro de configuracao.
   #
-  # KNOWN IMPROVEMENT, not yet applied: the steps RemoveSshHostKeys,
-  # ResetMachineId and CleanCloudInit are redundant, because the Image Builder
-  # itself runs a RunSanitizeScript before the snapshot. Simplifying would
-  # require bumping this version and that of the two recipes - worth doing
-  # together with the next real change, not in a build just for it.
+  # MELHORIA CONHECIDA, ainda nao aplicada: os passos RemoveSshHostKeys,
+  # ResetMachineId e CleanCloudInit sao redundantes, porque o proprio Image
+  # Builder roda um RunSanitizeScript antes do snapshot. Simplificar exigiria
+  # subir esta versao e a das duas receitas - vale fazer junto com a proxima
+  # mudanca real, nao numa build so para isso.
   component_version = "1.0.2"
 
   data = file("${path.module}/components/cleanup.yml")
@@ -131,29 +126,28 @@ module "component_cleanup" {
 module "component_docker" {
   source = "./modules/component"
 
-  name        = "acme-docker"
-  description = "Docker Engine with log limit and live-restore"
+  name        = "mb-docker"
+  description = "Docker Engine com limite de log e live-restore"
 
-  # 1.0.2: the validation was SIMPLIFIED.
+  # 1.0.2: a validacao foi SIMPLIFICADA.
   #
-  # 1.0.1 had a step that started a container and read the LogConfig with
-  # "grep -A3". The 3-line window cut off before the max-size, and build
-  # 1.0.1/1 was REJECTED by mistake - the configuration was correct (max-file:
-  # 3 appeared in the log, proving the inheritance).
+  # A 1.0.1 tinha um passo que subia container e lia o LogConfig com
+  # "grep -A3". A janela de 3 linhas cortava antes do max-size, e a build
+  # 1.0.1/1 foi REPROVADA por engano - a configuracao estava correta
+  # (max-file: 3 apareceu no log, provando a heranca).
   #
-  # ONE check is left: "Live Restore Enabled: true" in docker info, which only
-  # shows up if it came from the daemon.json. If the daemon read the file, it
-  # read the log-opts too - they are in the same file. A complicated checker
-  # becomes a source of failure instead of a detector: of the 3 build
-  # failures, 1 was a real bug and 2 were the checker itself.
+  # Ficou UMA verificacao: "Live Restore Enabled: true" no docker info, que so
+  # aparece se veio do daemon.json. Se o daemon leu o arquivo, leu o log-opts
+  # tambem - estao no mesmo arquivo. Verificador complicado vira fonte de
+  # falha em vez de detector: das 3 falhas de build, 1 foi bug real e 2 foram
+  # o proprio verificador.
   #
-  # History of previous versions:
-  # 1.0.1 - daemon.json started being written BEFORE the apt install (the "apt
-  #         install" already starts the daemon, and configuration that only
-  #         applies to resources created afterwards does not reach what it
-  #         already created), and the custom default-address-pools was REMOVED,
-  #         going back to the Docker default. See the note at the end of
-  #         components/docker.yml.
+  # Historico das versoes anteriores:
+  # 1.0.1 - daemon.json passou a ser escrito ANTES do apt install (o "apt
+  #         install" ja sobe o daemon, e configuracao que so vale para
+  #         recursos criados depois nao alcanca o que ele ja criou), e o
+  #         default-address-pools customizado foi REMOVIDO, voltando ao padrao
+  #         do Docker. Ver a nota ao fim de components/docker.yml.
   component_version = "1.0.2"
 
   data = file("${path.module}/components/docker.yml")

@@ -1,0 +1,8 @@
+<powershell>
+# Define o hostname da máquina e reinicia para aplicar.
+$desired = "${hostname}"
+if ($env:COMPUTERNAME -ne $desired) {
+    Rename-Computer -NewName $desired -Force
+    Restart-Computer -Force
+}
+</powershell>

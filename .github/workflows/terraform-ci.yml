@@ -65,8 +65,12 @@ jobs:
   # the provider schema to resolve resource types - without init it fails for
   # the wrong reason.
   #
-  # fail-fast: false because knowing that THREE of the four configurations
+  # fail-fast: false because knowing that several of the configurations
   # broke is different information from knowing that one did.
+  #
+  # `instances/` is not in the list: its root provisions nothing (it only
+  # indexes the stacks). Each site/stack under it is its own configuration
+  # with its own state, so they are validated individually.
   # -------------------------------------------------------------------------
   validate:
     name: terraform validate
@@ -74,7 +78,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config: [bootstrap, images, instances, network-peering]
+        config:
+          - bootstrap
+          - images
+          - network-peering
+          - instances/linux-erp-site-prod
+          - instances/linux-erp-site-nonprod
+          - instances/win-app-site
+          - instances/_templates
     steps:
       - uses: actions/checkout@v4
 

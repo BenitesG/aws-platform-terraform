@@ -1,0 +1,42 @@
+##################################################################
+# terraform.tfvars.example - MOLDE
+#
+# Copie para terraform.tfvars e preencha. Ajuste os campos ao seu stack.
+##################################################################
+
+# Infra de terceiro (se o stack fala com o legacy ERP / Studio 5000). Remova se nao usa.
+erp_host_cidr        = "" # /32 do host do legacy ERP
+plc_host_cidr = "" # /32 do Studio 5000 (vazio = sem protocolo industrial)
+
+aws_profile = "acme-swe-prod-admin" # DelegatedAdmin se anexa instance profile
+region      = "us-west-2"
+
+vpc_id            = "" # acme-swe-prod-vpc
+private_subnet_id = "" # acme-swe-prod-private-d
+instance_profile  = "delegated-ec2-ssm"
+
+common_tags = {
+  ManagedBy                       = "terraform"
+  "acme:cost-allocation:Department" = "swe"
+  "acme:cost-allocation:CostCenter" = "h370infra"
+  "mb:data:DataClassification"    = "interno"
+  Owner                           = "platform-team@acme.example"
+  ChargeType                      = "dedicated"
+}
+
+# Uma entrada por maquina. Maquina simples = poucas linhas; complexa usa os
+# mapas de integracao (ver linux-erp-site-prod/terraform.tfvars como exemplo
+# real de maquina com protocolo industrial).
+servers = {
+  SWE-X-EXEMPLO01 = {
+    name     = "acme-swe-<amb>-exemplo"
+    ami_id   = "" # fixo
+    key_name = "acme-swe-<amb>-exemplo"
+
+    project     = "<responder>"
+    application = "<responder>"
+    environment = "<nonprod ou prod>"
+    # request_id = "ticketing-system-xxxx"
+    # attach_client_sg = false   # se NAO fala com o legacy ERP
+  }
+}

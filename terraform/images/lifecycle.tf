@@ -1,28 +1,27 @@
 # ---------------------------------------------------------------------------
 # images/lifecycle.tf
 #
-# Deprecation policy for the golden images.
+# Politica de descontinuacao das golden images.
 #
-# WHY THIS IS NOT OPTIONAL: each build keeps an EBS snapshot of the image's
-# disk. At 20 GB, that is on the order of US$ 1/month per version. On a monthly
-# rebuild, twelve months without cleanup become ~US$ 12/month of images nobody
-# uses - and the cost grows silently, with no alarm at all. Same pattern as the
-# forgotten EIP.
+# POR QUE ISTO NAO E OPCIONAL: cada build guarda um snapshot EBS do disco da
+# imagem. Com 20 GB, e da ordem de US$ 1/mes por versao. Num repique mensal,
+# doze meses sem limpeza viram ~US$ 12/mes de imagem que ninguem usa - e o
+# custo cresce em silencio, sem alarme nenhum. Mesmo padrao do EIP esquecido.
 #
-# There is a second reason: recipes and components cannot be deleted while an
-# image that references them exists. Without deprecation, the old recipes also
-# accumulate without being removable.
+# Ha um segundo motivo, descoberto em 14/10: receitas e componentes nao podem
+# ser apagados enquanto existir imagem que os referencie. Sem descontinuacao,
+# as receitas antigas tambem acumulam sem poder ser removidas.
 # ---------------------------------------------------------------------------
 
-# The role that the lifecycle service assumes to delete the AMI and snapshot.
+# O papel que o servico de lifecycle assume para apagar AMI e snapshot.
 #
-# Different from the build role: this one is assumed by the SERVICE ITSELF
-# (imagebuilder.amazonaws.com), not by an EC2 instance.
+# Diferente do papel de build: este e assumido pelo PROPRIO SERVICO
+# (imagebuilder.amazonaws.com), nao por uma instancia EC2.
 resource "aws_iam_role" "lifecycle" {
-  # delegated- prefix required by the DelegatedAdminBoundary.
+  # Prefixo delegated- obrigatorio pela DelegatedAdminBoundary.
   name = "delegated-imagebuilder-lifecycle"
 
-  # Without the boundary the CreateRole is denied.
+  # Sem a boundary o CreateRole e negado.
   permissions_boundary = var.permissions_boundary_arn
 
   assume_role_policy = jsonencode({
@@ -34,7 +33,7 @@ resource "aws_iam_role" "lifecycle" {
     }]
   })
 
-  description = "Execution role of the image deprecation policy"
+  description = "Papel de execucao da politica de descontinuacao de imagens"
 }
 
 resource "aws_iam_role_policy_attachment" "lifecycle" {
@@ -43,82 +42,84 @@ resource "aws_iam_role_policy_attachment" "lifecycle" {
 }
 
 # ---------------------------------------------------------------------------
-# UNBLOCKED ON 2026-10-15
+# DESTRAVADO EM 15/10/2026
 #
-# History: the creation failed with
+# Historico: a criacao falhou em 14/10 com
 #   AccessDeniedException: not authorized to perform iam:PassRole on
 #   role/delegated-imagebuilder-lifecycle because no permissions boundary
 #   allows the iam:PassRole action
 #
-# Cause: the "PassRoleSomenteParaServicos" statement of the
-# DelegatedAdminBoundary restricted iam:PassRole to ec2, lambda and ecs-tasks.
-# The lifecycle policy passes the role to imagebuilder.amazonaws.com, which was
-# not on the list.
+# Causa: o statement "PassRoleSomenteParaServicos" da DelegatedAdminBoundary
+# restringia iam:PassRole a ec2, lambda e ecs-tasks. A politica de lifecycle
+# passa o papel para imagebuilder.amazonaws.com, que nao estava na lista.
 #
-# The administrator published v2 of the boundary, swapping StringEquals for
-# StringLike with "lambda*", "ecs*", "ec2.*" and "image*". Confirmed by
-# simulate-principal-policy, with the SAME session as before (a change to a
-# policy document takes effect on the next call, it does not require a
-# re-login):
+# O administrador publicou a v2 da boundary em 15/10 13:38 UTC, trocando
+# StringEquals por StringLike com "lambda*", "ecs*", "ec2.*" e "image*".
+# Confirmado por simulate-principal-policy, com a MESMA sessao de antes
+# (mudanca em documento de politica vale na proxima chamada, nao exige
+# relogin):
 #   PassRole -> imagebuilder.amazonaws.com .............. allowed
 #   imagebuilder:CreateLifecyclePolicy ................... allowed
 #
-# RESERVATION ON RECORD: the wildcard widened the boundary more than necessary
-# - "ecs*" now covers ecs.amazonaws.com, not just ecs-tasks. It is not
-# blocking, but the narrow version (StringEquals with the four exact
-# principals) would give the same functional result without widening anything.
+# RESSALVA REGISTRADA: o curinga alargou a boundary mais que o necessario -
+# "ecs*" agora cobre ecs.amazonaws.com, nao so ecs-tasks. Nao e bloqueante,
+# mas a versao estreita (StringEquals com os quatro principais exatos) daria o
+# mesmo resultado funcional sem ampliar nada.
 # ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
-# ONE POLICY PER LINEAGE
+# UMA POLITICA POR LINHAGEM, decidido em 16/10
 #
-# There used to be ONE policy selecting Application = golden-image, a value the
-# three lineages shared. Two problems with that:
+# Antes havia UMA politica selecionando Application = golden-image, valor que
+# as tres linhagens compartilhavam. Dois problemas nisso:
 #
-#   1. The COUNT grouping was ambiguous - did "keep the 3 most recent" apply
-#      per lineage or to the whole set? With 2 builds of each, the oldest could
-#      be deleted even though it was the only one of that lineage. And the base
-#      x86 is the PARENT IMAGE of the container host: deleting it would break
-#      the child recipe
-#   2. There was no way to tell images apart in the inventory or in the Cost
-#      Explorer
+#   1. O agrupamento do COUNT ficava ambiguo - "manter as 3 mais recentes"
+#      valia por linhagem ou para o conjunto? Com 2 builds de cada, a mais
+#      antiga poderia ser apagada mesmo sendo a unica daquela linhagem. E a
+#      base x86 e IMAGEM-PAI do host de container: apaga-la quebraria a
+#      receita filha
+#   2. Nao dava para diferenciar imagens no inventario nem no Cost Explorer
 #
-# With one policy per lineage, "the 3 most recent" is unambiguous, and adding a
-# new lineage is one entry in the map.
+# Com uma politica por linhagem, "as 3 mais recentes" e inequivoco, e o
+# acrescimo de uma linhagem nova e uma entrada no mapa.
 #
-# ATTENTION - THIS STILL DOES NOT WORK ON ITS OWN, and the reason is important:
+# ATENCAO - ISTO AINDA NAO FUNCIONA, e o motivo e importante:
 #
-# Tag-based selection evaluates tags on the IMAGE RESOURCE of the Image
-# Builder, not on the output AMI. The AWS documentation: "tags on the Image
-# Builder image resource only, not on output AMIs". And the image resource is
-# born WITHOUT TAGS - it does not propagate from the pipeline nor from the
-# recipe (verified in practice).
+# A selecao por tag avalia tags no RECURSO IMAGE do Image Builder, nao na AMI
+# de saida. A documentacao da AWS: "tags on the Image Builder image resource
+# only, not on output AMIs". E o recurso image nasce SEM TAGS - nao propaga do
+# pipeline nem da receita (verificado em 15 e 16/10).
 #
-# So the image resource must be tagged AFTER each build:
-#   aws imagebuilder tag-resource --resource-arn <image arn> \
-#     --tags "acme:cost-allocation:Application=<lineage>"
+# Entao e preciso taguear o recurso image DEPOIS de cada build:
+#   aws imagebuilder tag-resource --resource-arn <arn da imagem> \
+#     --tags "acme:cost-allocation:Application=<linhagem>"
 #
-# The image resource tagging Lambda exists to automate this - it would copy
-# the recipe's tags to the image, generically. It was not implemented.
+# A Lambda desenhada no A44 existe para automatizar isso - ela copiaria as
+# tags da receita para a imagem, de forma generica. Nao foi implementada.
 # ---------------------------------------------------------------------------
 
 locals {
-  # key   = value of the Application tag on the lineage
-  # value = name of the retention policy
+  # chave = valor da tag Application na linhagem
+  # valor = nome da politica de retencao
   #
-  # The key values come from what was applied to the AMIs and from the
-  # ami_tags of the distribution configurations - the two must match, or the
-  # policy selects nothing.
+  # Os valores da chave vem do que foi aplicado nas AMIs em 16/10 e do
+  # ami_tags das distribution configurations - os dois precisam casar, senao a
+  # politica nao seleciona nada.
   #
-  # FOUR LINEAGES: base and container host, in x86 and arm64.
-  # The arm64 container host exists because the integration worker (dataflow)
-  # is t4g and had Docker installed BY HAND - without its own lineage, the
-  # daemon.json with log rotation does not reach a Graviton machine.
+  # QUATRO LINHAGENS Ubuntu desde 19/10, mais a WINDOWS desde 23/10.
+  # A arm64 de host de container existe porque a operationalflow e t4g e teve
+  # Docker instalado A MAO - sem linhagem propria, o daemon.json com rotacao
+  # de log nao chega em maquina Graviton.
+  #
+  # A chave TEM DE CASAR com o acme:cost-allocation:Application do extra_ami_tags
+  # da distribution configuration da linhagem - senao a politica seleciona
+  # nada. A da Windows e "windows-2025", definida em windows.tf.
   retention_lineages = {
     "ubuntu-2604-x86"          = "acme-swe-prod-retention-ubuntu-2604-x86"
     "ubuntu-2604-arm64"        = "acme-swe-prod-retention-ubuntu-2604-arm64"
     "docker-ubuntu-2604-x86"   = "acme-swe-prod-retention-docker-ubuntu-2604-x86"
     "docker-ubuntu-2604-arm64" = "acme-swe-prod-retention-docker-ubuntu-2604-arm64"
+    "windows-2025"             = "acme-swe-prod-retention-windows-2025"
   }
 }
 
@@ -126,7 +127,7 @@ resource "aws_imagebuilder_lifecycle_policy" "golden_images" {
   for_each = local.retention_lineages
 
   name           = each.value
-  description    = "Keeps the 2 most recent versions of the ${each.key} lineage"
+  description    = "Mantem as 2 versoes mais recentes da linhagem ${each.key}"
   execution_role = aws_iam_role.lifecycle.arn
   resource_type  = "AMI_IMAGE"
   status         = "ENABLED"
@@ -135,17 +136,17 @@ resource "aws_imagebuilder_lifecycle_policy" "golden_images" {
     action {
       type = "DELETE"
 
-      # snapshots = true is the central point: deregistering the AMI without
-      # deleting the snapshot frees no cost at all, because the storage is in
-      # the snapshot, not in the AMI.
+      # snapshots = true e o ponto central: desregistrar a AMI sem apagar o
+      # snapshot nao libera custo nenhum, porque o armazenamento esta no
+      # snapshot, nao na AMI.
       #
-      # containers = false MUST BE DECLARED, even though it is the default.
+      # containers = false E OBRIGATORIO DECLARAR, mesmo sendo o padrao.
       #
-      # Without this line the apply fails with "Provider produced inconsistent
-      # result after apply": the provider plans containers as UNKNOWN, the API
-      # returns false, and since policy_detail is a SET the planned element
-      # does not correlate with the returned one. The resource does get created
-      # in AWS, but the apply aborts.
+      # Sem esta linha o apply falha com "Provider produced inconsistent
+      # result after apply": o provider planeja containers como UNKNOWN, a API
+      # devolve false, e como policy_detail e um SET o elemento planejado nao
+      # correlaciona com o retornado. O recurso chega a ser criado na AWS, mas
+      # o apply aborta. Descoberto no apply de 15/10.
       include_resources {
         amis       = true
         snapshots  = true
@@ -153,52 +154,53 @@ resource "aws_imagebuilder_lifecycle_policy" "golden_images" {
       }
     }
 
-    # COUNT = keep the N most recent. The alternative would be AGE (by age),
-    # which is worse here: if no one builds an image for months, AGE would
-    # delete the only one that exists.
+    # COUNT = mantem as N mais recentes. A alternativa seria AGE (por idade),
+    # que e pior aqui: se ninguem construir imagem por meses, AGE apagaria a
+    # unica que existe.
     #
-    # With ONE POLICY PER LINEAGE the grouping is unambiguous: it is the N most
-    # recent OF THIS lineage.
+    # Com UMA POLITICA POR LINHAGEM o agrupamento e inequivoco: sao as N mais
+    # recentes DESTA linhagem.
     #
-    # COUNT 2, lowered from 3. The reason is the CEILING, not the present:
+    # COUNT 2, baixado de 3 em 19/10. O motivo e o TETO, nao o presente:
     #
-    #   4 lineages x 3 versions = up to 300 GB  ~US$ 15.00/month
-    #   4 lineages x 2 versions = up to 200 GB  ~US$ 10.00/month
+    #   4 linhagens x 3 versoes = ate 300 GB  ~US$ 15,00/mes
+    #   4 linhagens x 2 versoes = ate 200 GB  ~US$ 10,00/mes
     #
-    # Two versions is the MINIMUM that preserves rollback: "the current and the
-    # previous". If a new build comes out defective, you can go back. The third
-    # one kept solves nothing the second does not already solve.
+    # Duas versoes e o MINIMO que preserva rollback: "a atual e a anterior".
+    # Se uma build nova sair defeituosa, da para voltar. A terceira guardada
+    # nao resolve nada que a segunda ja nao resolva.
     #
-    # COUNT 1 was discarded: it would delete exactly the version that worked at
-    # the moment the new one came in, leaving the account with no way back.
+    # COUNT 1 foi descartado: apagaria justamente a versao que funcionava no
+    # momento em que a nova entrasse, deixando a conta sem caminho de volta.
     filter {
       type  = "COUNT"
       value = 2
     }
 
-    # Safety net: does not delete an AMI used to launch an instance in the last
-    # 30 days, even if it falls outside the 3 most recent.
+    # Rede de seguranca: nao apaga AMI usada para lancar instancia nos
+    # ultimos 30 dias, mesmo que ela caia fora das 3 mais recentes.
     #
-    # Deleting the AMI does not bring down an already-running instance - it has
-    # its own volume. What is lost is the ability to launch ANOTHER identical
-    # instance, and that is exactly what this rule protects.
+    # Apagar a AMI nao derruba instancia ja rodando - ela tem volume proprio.
+    # O que se perde e a capacidade de lancar OUTRA instancia identica, e e
+    # exatamente isso que esta regra protege.
     #
-    # It PARTIALLY protects the base AMI: the container host build launches an
-    # instance from it, which updates the last_launched. But if no one builds
-    # the container host for more than 30 days, that protection expires.
+    # Protege PARCIALMENTE a AMI base: a build do host de container lanca uma
+    # instancia a partir dela, o que atualiza o last_launched. Mas se ninguem
+    # construir o host de container por mais de 30 dias, essa protecao expira.
     exclusion_rules {
       amis {
-        # is_public = false MUST BE DECLARED, even though it is the default -
-        # same trap as containers above.
+        # is_public = false TEM DE SER DECLARADO, mesmo sendo o padrao - mesma
+        # armadilha do containers acima.
         #
-        # The API returns is_public = false; without declaring it, the set
-        # element of policy_detail differs from what is in the state and the
-        # plan ends up with a PERPETUAL DIFF: every run shows policy_detail
-        # being removed and recreated, and "No changes" never shows up again.
+        # A API devolve is_public = false; sem declarar, o elemento do set
+        # policy_detail difere do que esta no estado e o plan fica com DIFF
+        # PERPETUO: toda execucao mostra policy_detail sendo removido e
+        # recriado, e "No changes" nunca mais aparece. Descoberto em 15/10,
+        # depois do untaint.
         #
-        # Our AMIs are never public (the account's public access block
-        # prevents it), so false is also the correct value by design: the rule
-        # "do not delete a public AMI" has no effect here.
+        # Nossas AMIs nunca sao publicas (o A06 bloqueia acesso publico na
+        # conta), entao false tambem e o valor correto por desenho: a regra
+        # "nao apague AMI publica" nao tem efeito aqui.
         is_public = false
 
         last_launched {
@@ -209,65 +211,63 @@ resource "aws_imagebuilder_lifecycle_policy" "golden_images" {
     }
   }
 
-  # Selection by LINEAGE TAG, not by recipe: this way the policy follows the
-  # future versions of the same lineage without being edited.
+  # Selecao por TAG DA LINHAGEM, nao por receita: assim a politica acompanha
+  # as versoes futuras da mesma linhagem sem ser editada.
   #
-  # REMEMBER: this evaluates tags on the IMAGE RESOURCE of the Image Builder,
-  # NOT on the output AMI. And the image resource is born without tags - it
-  # must be tagged after each build, by hand or by the tagging Lambda. See the
-  # note at the top.
+  # LEMBRE: isto avalia tags no RECURSO IMAGE do Image Builder, NAO na AMI de
+  # saida. E o recurso image nasce sem tags - precisa ser tagueado depois de
+  # cada build, a mao ou pela Lambda do A44. Ver a nota no topo.
   resource_selection {
     tag_map = {
       "acme:cost-allocation:Application" = each.key
     }
   }
 
-  # Ensures the managed policy is attached before the service tries to use the
-  # role.
+  # Garante que a politica gerenciada esteja anexada antes de o servico tentar
+  # usar o papel.
   depends_on = [aws_iam_role_policy_attachment.lifecycle]
 }
 
 output "lifecycle_policy_arns" {
-  description = "ARNs of the retention policies, one per lineage"
+  description = "ARNs das politicas de retencao, uma por linhagem"
   value       = { for k, v in aws_imagebuilder_lifecycle_policy.golden_images : k => v.arn }
 }
 
 # ---------------------------------------------------------------------------
-# WHAT IS MISSING FOR RETENTION TO ACTUALLY WORK
+# O QUE FALTA PARA A RETENCAO FUNCIONAR DE FATO
 #
-# The policies are ENABLED and correct, but they do NOT SELECT ANYTHING yet,
-# because the IMAGE resource of the Image Builder is born without tags.
+# As politicas estao ENABLED e corretas, mas NAO SELECIONAM NADA ainda,
+# porque o recurso IMAGE do Image Builder nasce sem tags.
 #
-# The three resource layers and who reads what:
+# As tres camadas de recurso e quem le o que:
 #
-#   Image Builder IMAGE resource  -> NO tags  -> THIS is what retention reads
-#   output AMI                    -> tagged   -> not read by retention
-#   snapshot                      -> tagged   -> not read by retention
+#   recurso IMAGE do Image Builder  -> SEM tags  -> E ESTA que a retencao le
+#   AMI de saida                    -> tagueada  -> nao e lida pela retencao
+#   snapshot                        -> tagueado  -> nao e lido pela retencao
 #
-# The AMI and snapshot tags serve for INVENTORY and the Cost Explorer, and for
-# that they are useful: they let you separate snapshot cost by lineage. But the
-# policy's selection evaluates only the image resource.
+# As tags de AMI e snapshot servem para INVENTARIO e Cost Explorer, e nisso
+# sao uteis: dao para separar custo de snapshot por linhagem. Mas a selecao da
+# politica avalia so o recurso image.
 #
-# FOR EACH BUILD, tag the image resource:
+# PARA CADA BUILD, taguear o recurso image:
 #
 #   aws imagebuilder tag-resource `
-#     --resource-arn "arn:aws:imagebuilder:us-west-2:111122223333:image/<name>/<version>/1" `
-#     --tags "acme:cost-allocation:Application=<lineage>" `
+#     --resource-arn "arn:aws:imagebuilder:us-west-2:111122223333:image/<nome>/<versao>/1" `
+#     --tags "acme:cost-allocation:Application=<linhagem>" `
 #     --profile acme-swe-prod
 #
-# Valid lineages, which must match the keys of retention_lineages:
+# Linhagens validas, que precisam casar com as chaves de retention_lineages:
 #   ubuntu-2604-x86 . ubuntu-2604-arm64 . docker-ubuntu-2604-x86
 #
-# The image resource tagging Lambda automates this generically: it reads the
-# image's recipe (image.imageRecipe.arn), takes its tags - which Terraform
-# already creates complete - and copies them to the image. It needs no lineage
-# table, and any future image works on its own. It was not implemented: with
-# manual triggering and few images, tagging by hand is more honest than keeping
-# code around.
+# A Lambda desenhada no A44 automatiza isso de forma generica: le a receita da
+# imagem (image.imageRecipe.arn), pega as tags dela - que o Terraform ja cria
+# completas - e copia para a imagem. Nao precisa de tabela de linhagens, e
+# qualquer imagem futura funciona sozinha. Nao foi implementada: com disparo
+# manual e poucas imagens, taguear a mao e mais honesto que manter codigo.
 #
-# HOW TO CHECK after a policy's first run:
+# COMO CONFERIR depois da primeira execucao de uma politica:
 #   aws imagebuilder list-lifecycle-execution-resources \
 #     --lifecycle-execution-id <id>
-# It shows exactly what it marked. Worth looking BEFORE trusting it with
-# several accumulated versions.
+# Mostra exatamente o que ela marcou. Vale olhar ANTES de confiar nela com
+# varias versoes acumuladas.
 # ---------------------------------------------------------------------------

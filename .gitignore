@@ -16,10 +16,18 @@
 *.tfstate.*
 *.tfstate.backup
 
-# Variables: may contain sensitive values
-*.tfvars
+# Manual state backups (terraform state pull before a state mv). They carry
+# infrastructure IDs. The whole directory stays out of git — the *.tfstate*
+# rule already covers the names, this is belt and suspenders.
+_state-backups/
+_state-mv-work/
+
+# Variables (*.tfvars): THESE ARE versioned. Each directory is a Terraform
+# project and its tfvars is its configuration — kept so we can see exactly how
+# each resource was created. Secrets do NOT go in tfvars: they live in SSM
+# Parameter Store / Secrets Manager. (This sanitized repo carries example
+# values only; see the note at the end of the README.)
 *.tfvars.json
-!*.tfvars.example
 
 # Plan output saved to a file
 *.tfplan
@@ -27,6 +35,11 @@
 # Terraform crash logs
 crash.log
 crash.*.log
+
+# EC2 key pairs / Windows passwords under instances/<stack>/keys/: NEVER
+# version. The whole directory is ignored, so no nested .gitignore can
+# re-include files from it (e.g. !keys/*.pub).
+instances/*/keys/
 
 # Python (tooling under tools/)
 __pycache__/

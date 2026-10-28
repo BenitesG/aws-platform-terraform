@@ -1,66 +1,64 @@
 # ---------------------------------------------------------------------------
 # images/images.tf
 #
-# The image lineages. Each one is three modules: recipe, distribution and
+# As linhagens de imagem. Cada uma sao tres modulos: recipe, distribution e
 # pipeline.
 #
-# Why three calls instead of one "image" module wrapping all three: because
-# recipe, distribution and pipeline have different lifecycles. A new recipe
-# does not require a new distribution; a distribution can be shared. Wrapping
-# all three was what the old image-pipeline module did, and it was what
-# prevented stacking images without duplicating code.
+# Por que tres chamadas em vez de um modulo "imagem" que embrulha os tres:
+# porque receita, distribuicao e pipeline tem ciclos de vida diferentes. Uma
+# receita nova nao exige distribuicao nova; uma distribuicao pode ser
+# compartilhada. Embrulhar os tres foi o que o modulo image-pipeline antigo
+# fazia, e era o que impedia empilhar imagem sem duplicar codigo.
 #
 # ===========================================================================
-# THE HIERARCHY
+# A HIERARQUIA
 # ===========================================================================
 #
-#   Canonical Ubuntu 26.04  (public SSM parameter)
+#   Ubuntu 26.04 da Canonical  (parametro publico do SSM)
 #            |
 #            v
-#   acme-base-ubuntu-2604        update-linux, timezone, cloudwatch-agent, cleanup
+#   mb-base-ubuntu-2604        update-linux, timezone, cloudwatch-agent, cleanup
 #            |
 #            v
-#   acme-docker-host-ubuntu-2604 update-linux, docker, cleanup
+#   mb-docker-host-ubuntu-2604 update-linux, docker, cleanup
 #
-# STACK, don't repeat. The container host image uses the AMI of our base image
-# as the parent image, so it is GUARANTEED to be the base plus Docker - not
-# "the base and the container host built with the same components on different
-# dates", which could start from different patch levels.
+# EMPILHAR, nao repetir. A imagem de host de container usa a AMI da nossa
+# imagem base como imagem-pai, entao ela e GARANTIDAMENTE a base mais Docker -
+# nao "a base e o host de container construidos com os mesmos componentes em
+# datas diferentes", que poderiam partir de niveis de patch distintos.
 #
-# The sentence you want to be able to say: "every server is the base image;
-# some have more stuff".
+# A frase que se quer poder dizer: "todo servidor e a imagem base; alguns tem
+# mais coisa".
 #
-# In exchange, it creates a dependency chain: the Docker image is as old as the
-# base it started from, and rebuilding the base does not update the child on
-# its own.
+# Em troca, cria cadeia de dependencia: a imagem de Docker e tao antiga quanto
+# a base de onde partiu, e repicar a base nao atualiza a filha sozinho.
 # ===========================================================================
 
 # ---------------------------------------------------------------------------
-# Lineage 1 - base image
+# Linhagem 1 - imagem base
 #
-# Name derived from the version: "26.04" becomes "acme-base-ubuntu-2604".
-# Changing the version generates a NEW LINEAGE - new recipe, distribution and
-# pipeline - which is the correct behavior: a different OS version is not an
-# update of the same image.
+# Nome derivado da versao: "26.04" vira "mb-base-ubuntu-2604". Trocar a versao
+# gera LINHAGEM NOVA - receita, distribuicao e pipeline novos - o que e o
+# comportamento correto: versao de SO diferente nao e atualizacao da mesma
+# imagem.
 # ---------------------------------------------------------------------------
 
 locals {
-  base_name         = "acme-base-ubuntu-${replace(var.ubuntu_version, ".", "")}"
-  docker_name       = "acme-docker-host-ubuntu-${replace(var.ubuntu_version, ".", "")}"
-  base_arm64_name   = "acme-base-ubuntu-${replace(var.ubuntu_version, ".", "")}-arm64"
-  docker_arm64_name = "acme-docker-host-ubuntu-${replace(var.ubuntu_version, ".", "")}-arm64"
+  base_name         = "mb-base-ubuntu-${replace(var.ubuntu_version, ".", "")}"
+  docker_name       = "mb-docker-host-ubuntu-${replace(var.ubuntu_version, ".", "")}"
+  base_arm64_name   = "mb-base-ubuntu-${replace(var.ubuntu_version, ".", "")}-arm64"
+  docker_arm64_name = "mb-docker-host-ubuntu-${replace(var.ubuntu_version, ".", "")}-arm64"
 
-  # PINNED parent AMIs, not the value of the SSM data source.
+  # AMIs-pai FIXAS, nao o valor do data source do SSM.
   #
-  # WHY: Canonical's public parameter points to "the current one" and changes
-  # on its own when they republish - it happened on 2026-10-16 at 03:20. Since
-  # parent_image is ForceNew in a recipe, a dynamic value makes Terraform want
-  # to REPLACE the recipes on every republication, and the replacement would
-  # FAIL because there are images referencing them
-  # (ResourceDependencyException).
+  # POR QUE: o parametro publico da Canonical aponta para "a atual" e muda
+  # sozinho quando ela republica - aconteceu em 16/10/2026 as 03:20. Como
+  # parent_image e ForceNew numa receita, valor dinamico faz o Terraform
+  # querer SUBSTITUIR as receitas a cada republicacao, e a substituicao
+  # FALHARIA porque ha imagens referenciando (ResourceDependencyException).
   #
-  # The data source still exists, but only to CONSULT which one is current - it
-  # became an informational output, not a recipe input.
+  # O data source continua existindo, mas apenas para CONSULTAR qual e a
+  # atual - virou output informativo, nao entrada da receita.
   parent_ami_ubuntu       = var.base_parent_ami_amd64
   parent_ami_ubuntu_arm64 = var.base_parent_ami_arm64
 }
@@ -70,43 +68,41 @@ module "base_recipe" {
 
   name = local.base_name
 
-  # NO description, and this is NOT an oversight.
+  # SEM description, e isto NAO e esquecimento.
   #
-  # A recipe is IMMUTABLE in the Image Builder: every argument is ForceNew. The
-  # recipe that exists today was created without a description, so adding one
-  # would make Terraform try to REPLACE it - and the replacement would fail
-  # with ResourceDependencyException, because ami-0f66666666666666f references
-  # this recipe.
+  # Receita e IMUTAVEL no Image Builder: todo argumento e ForceNew. A receita
+  # que existe hoje foi criada sem descricao, entao acrescentar uma faria o
+  # Terraform tentar SUBSTITUIR - e a substituicao falharia com
+  # ResourceDependencyException, porque a ami-0a1b2c3d4e5fb0008 referencia
+  # esta receita.
   #
-  # On the base lineage the diff has to be ZERO for the moved block to be a
-  # MOVE. The Docker lineage, being new, has a description normally.
+  # Na linhagem base o diff tem de ser ZERO para o bloco moved ser um MOVE.
+  # A linhagem do Docker, sendo nova, tem descricao normalmente.
 
-  # 1.0.3 - CYCLE OF 2026-10-19. Three changes in the same apply, on purpose:
-  # pay the cost of the recipe replacement once instead of three times.
+  # 1.0.3 - CICLO DE 19/10/2026. Tres mudancas no mesmo apply, de proposito:
+  # pagar o custo da substituicao de receita uma vez em vez de tres.
   #
-  #   1. acme-timezone 1.0.1, with the AWS time source
-  #   2. parent AMI updated to Canonical's 10-16 republication
-  #   3. (consequence) OS patches accumulated since the previous cycle
+  #   1. mb-timezone 1.0.1, com a fonte de tempo da AWS
+  #   2. AMI-pai atualizada para a republicacao da Canonical de 16/10
+  #   3. (consequencia) patches de SO acumulados desde 14/10
   #
-  # The previous comment said "DO NOT CHANGE in this refactor" - that applied
-  # to the refactor into modules, where the diff had to be ZERO for the moved
-  # blocks to be a MOVE and not a replace. That apply was completed and the
-  # moved blocks have already been removed, so the restriction no longer
-  # applies.
+  # O comentario anterior dizia "NAO MUDAR nesta refatoracao" - aquilo valia
+  # para a refatoracao em modulos de 15/10, onde o diff tinha de ser ZERO para
+  # os blocos moved serem MOVE e nao replace. Aquele apply foi concluido e os
+  # blocos moved ja foram removidos, entao a restricao nao se aplica mais.
   recipe_version = "1.0.3"
 
   parent_image     = local.parent_ami_ubuntu
   root_volume_size = var.root_volume_size
 
-  # THE ORDER IS THE ORDER OF EXECUTION. The cleanup is the LAST.
+  # A ORDEM E A ORDEM DE EXECUCAO. O cleanup e o ULTIMO.
   #
-  # The "x.x.x" in the managed components is not a placeholder: it is the Image
-  # Builder syntax for "the latest version".
+  # O "x.x.x" nos componentes gerenciados nao e placeholder: e a sintaxe do
+  # Image Builder para "a versao mais recente".
   #
-  # Note on update-linux: it tries to install amazon-ssm-agent via apt and
-  # fails with "E: Unable to locate package". It is HARMLESS - on Ubuntu the
-  # agent is a snap and already ships in Canonical's AMI. The build proceeds
-  # normally.
+  # Nota sobre o update-linux: ele tenta instalar amazon-ssm-agent por apt e
+  # falha com "E: Unable to locate package". E INOFENSIVO - no Ubuntu o agente
+  # e snap e ja vem na AMI da Canonical. A build segue normalmente.
   component_arns = [
     "arn:aws:imagebuilder:${var.region}:aws:component/update-linux/x.x.x",
     module.component_timezone.arn,
@@ -118,28 +114,27 @@ module "base_recipe" {
 module "base_distribution" {
   source = "./modules/distribution"
 
-  # No description, for the same reason as the recipe: zero diff on the base
-  # lineage.
+  # Sem description, pelo mesmo motivo da receita: diff zero na linhagem base.
   name           = local.base_name
   region         = var.region
   recipe_version = module.base_recipe.version
   parent_image   = module.base_recipe.parent_image
   common_tags    = var.common_tags
 
-  # LINEAGE TAGS, aligned with what was applied by hand to the existing AMIs
-  # and snapshots.
+  # TAGS DA LINHAGEM, alinhadas em 16/10 com o que foi aplicado a mao nas AMIs
+  # e snapshots existentes.
   #
-  # WHY HERE: ami_tags is the ONLY place that tags the AMI and the snapshot.
-  # The provider's default_tags reaches neither of them, because the service
-  # is the one that creates them. Changing the tag in the console fixes the
-  # resource that already exists, but the NEXT build comes back with the value
-  # from the code - that was what was going to happen here.
+  # POR QUE AQUI: ami_tags e o UNICO lugar que tagueia a AMI e o snapshot. O
+  # default_tags do provider nao alcanca nenhum dos dois, porque quem os cria e
+  # o servico. Mudar a tag no console resolve o recurso que ja existe, mas a
+  # PROXIMA build volta com o valor do codigo - foi o que ia acontecer aqui.
   #
-  # extra_ami_tags is merged LAST in the module, so it overrides the default
-  # Name (which would be the resource name, without the architecture suffix).
+  # extra_ami_tags e mesclado POR ULTIMO no modulo, entao sobrescreve o Name
+  # padrao (que seria o nome do recurso, sem o sufixo de arquitetura).
   #
-  # "x86" for brevity, understood as x86_64. What matters is consistency: the
-  # Cost Explorer treats different spellings as different applications.
+  # "x86" por brevidade, decidido em 16/10 - entende-se como x86_64. O
+  # importante e a consistencia: o Cost Explorer trata grafias diferentes como
+  # aplicacoes diferentes.
   extra_ami_tags = {
     Name                               = "${local.base_name}-x86"
     "acme:cost-allocation:Application" = "ubuntu-2604-x86"
@@ -149,87 +144,85 @@ module "base_distribution" {
 module "base_pipeline" {
   source = "./modules/pipeline"
 
-  # No description: zero diff.
+  # Sem description: diff zero.
   name = local.base_name
 
   recipe_arn         = module.base_recipe.arn
   infrastructure_arn = module.build_infrastructure.arn
   distribution_arn   = module.base_distribution.arn
 
-  # LINEAGE TAGS. The three pipelines had Application = golden-image, inherited
-  # from default_tags, and were indistinguishable by tag - the same ambiguity
-  # the AMIs and the retention policies resolved earlier.
+  # TAGS DA LINHAGEM. Acrescentado em 16/10: os tres pipelines estavam com
+  # Application = golden-image, herdada do default_tags, e eram
+  # indistinguiveis por tag - a mesma ambiguidade que as AMIs e as politicas
+  # de retencao resolveram mais cedo no mesmo dia.
   #
-  # The value matches the distribution's extra_ami_tags and the key in
-  # retention_lineages, on purpose: the three layers say the same thing.
+  # O valor casa com o extra_ami_tags da distribuicao e com a chave em
+  # retention_lineages, de proposito: as tres camadas dizem a mesma coisa.
   #
-  # This is NOT what makes retention work - it reads the image resource, not
-  # the pipeline. Here it is inventory.
+  # NAO e isto que faz a retencao funcionar - ela le o recurso image, nao o
+  # pipeline. Aqui e inventario.
   extra_tags = {
     "acme:cost-allocation:Application" = "ubuntu-2604-x86"
   }
 
-  # Manual trigger. No schedule - the monthly scheduling comes in when the
-  # rebuild cadence is decided AND the image resource tagging is automated by
-  # the Lambda, because today it is manual after each build.
+  # Disparo manual. Sem schedule - o agendamento mensal entra quando a cadencia
+  # de repique for decidida (A42) E o tagueamento do recurso image estiver
+  # automatizado pela Lambda, porque hoje ele e manual depois de cada build.
   schedule = null
 }
 
 # ---------------------------------------------------------------------------
-# Lineage 2 - container host (Docker)
+# Linhagem 2 - host de container (Docker)
 #
-# STACKED on top of the base image.
+# EMPILHADA sobre a imagem base.
 #
-# Docker does NOT go into the base image: the daemon runs as root and belonging
-# to the "docker" group is equivalent to being root - you can mount the host
-# filesystem inside a container. It should not be on a server that does not
-# need it.
+# Docker NAO entra na imagem base: o daemon roda como root e pertencer ao
+# grupo "docker" equivale a ser root - da para montar o filesystem do host
+# dentro de um container. Nao deve estar em servidor que nao precisa.
 # ---------------------------------------------------------------------------
 
 module "docker_host_recipe" {
   source = "./modules/recipe"
 
   name        = local.docker_name
-  description = "Container host: base image plus Docker Engine with its own address pool"
+  description = "Host de container: imagem base mais Docker Engine com pool de enderecos proprio"
 
-  # 1.0.3 - phase 2 cycle, 10-19. Repoints to the NEW x86 base
-  # (ami-0c33333333333333c), which brings the clock fix and the parent AMI
-  # republished on 10-16.
+  # 1.0.3 - ciclo da fase 2, 19/10. Reponta para a base x86 NOVA
+  # (ami-0a1b2c3d4e5fb0003), que traz a correcao do relogio e a AMI-pai
+  # republicada em 16/10.
   #
-  # This is what RELEASES ami-0f66666666666666f for removal: it was the parent
-  # image of this recipe, and that was the only reference holding it.
+  # Isto e o que LIBERA a ami-0a1b2c3d4e5fb0008 para remocao: ela era a
+  # imagem-pai desta receita, e essa era a unica referencia que a prendia.
   #
-  # THIS IS THE CLASSIC "TWO VERSIONS" CASE: the component ARN includes its
-  # version, so changing the component CHANGES THE RECIPE. Bumping only the
-  # component's would make the apply not change the recipe and the build keep
-  # using the old version - with no error at all.
+  # ESTE E O CASO CLASSICO DAS "DUAS VERSOES": o ARN do componente inclui a
+  # versao dele, entao mudar o componente MUDA A RECEITA. Subir so a do
+  # componente faria o apply nao mudar a receita e a build continuar usando a
+  # versao antiga - sem erro nenhum.
   recipe_version = "1.0.3"
 
-  # THE PARENT IMAGE IS OUR OWN BASE AMI, not Ubuntu's.
+  # A IMAGEM-PAI E A NOSSA PROPRIA AMI BASE, nao a do Ubuntu.
   #
-  # The value is PINNED and comes from the tfvars, on purpose - same reason the
-  # instances' ami_id is pinned. A data "aws_ami" with most_recent = true looks
-  # convenient and is dangerous: a new base build would change the value, and
-  # the next apply - even one done for something else - would replace this
-  # recipe with no one asking.
+  # O valor e FIXO e vem do tfvars, de proposito - mesmo motivo pelo qual o
+  # ami_id das instancias e fixo. Um data "aws_ami" com most_recent = true
+  # parece conveniente e e perigoso: uma build nova da base mudaria o valor, e
+  # o proximo apply - mesmo um feito para outra coisa - substituiria esta
+  # receita sem ninguem pedir.
   #
-  # Changing the base should be a deliberate act: you change the variable
-  # knowing the recipe will be replaced and that the version needs to be
-  # bumped.
+  # Trocar de base deve ser ato deliberado: muda-se a variavel sabendo que a
+  # receita sera substituida e que a versao precisa subir.
   parent_image     = var.base_ami_id
   root_volume_size = var.root_volume_size
 
-  # Does NOT repeat timezone nor the CloudWatch agent: they already came from
-  # the base image and are on the disk. That is the gain of stacking.
+  # NAO repete timezone nem o agente do CloudWatch: ja vieram da imagem base e
+  # estao no disco. Isso e o ganho de empilhar.
   #
-  # update-linux goes in AGAIN, on purpose: it picks up the patches published
-  # between the base build and this build.
+  # O update-linux ENTRA de novo, e de proposito: pega os patches publicados
+  # entre a build da base e esta build.
   #
-  # cleanup ALSO goes in again, and this is easy to forget when stacking: the
-  # build instance of this image is born from the base AMI and generates a NEW
-  # identity on the first boot - SSH host keys, machine-id, cloud-init state.
-  # Without running the cleanup again, that identity would go into the
-  # snapshot.
+  # O cleanup TAMBEM entra de novo, e isso e facil de esquecer ao empilhar: a
+  # instancia de build desta imagem nasce da AMI base e gera identidade NOVA
+  # no primeiro boot - chaves de host SSH, machine-id, estado do cloud-init.
+  # Sem rodar a limpeza outra vez, essa identidade iria para o snapshot.
   component_arns = [
     "arn:aws:imagebuilder:${var.region}:aws:component/update-linux/x.x.x",
     module.component_docker.arn,
@@ -241,18 +234,17 @@ module "docker_host_distribution" {
   source = "./modules/distribution"
 
   name           = local.docker_name
-  description    = "Distribution of the container host image in us-west-2"
+  description    = "Distribuicao da imagem de host de container na us-west-2"
   region         = var.region
   recipe_version = module.docker_host_recipe.version
 
-  # ParentImage receives the AMI of our base, which makes the chain auditable:
-  # looking at the container host AMI, you can tell which base it was born
-  # from.
+  # ParentImage recebe a AMI da nossa base, o que torna a cadeia auditavel:
+  # olhando a AMI do host de container, da para saber de qual base ela nasceu.
   parent_image = module.docker_host_recipe.parent_image
   common_tags  = var.common_tags
 
-  # Lineage tags, aligned with what was applied by hand.
-  # See the note in base_distribution.
+  # Tags da linhagem, alinhadas em 16/10 com o que foi aplicado a mao.
+  # Ver a nota em base_distribution.
   extra_ami_tags = {
     Name                               = "${local.docker_name}-x86"
     "acme:cost-allocation:Application" = "docker-ubuntu-2604-x86"
@@ -264,13 +256,13 @@ module "docker_host_pipeline" {
   source = "./modules/pipeline"
 
   name        = local.docker_name
-  description = "Container host pipeline: base plus Docker"
+  description = "Pipeline do host de container: base mais Docker"
 
   recipe_arn         = module.docker_host_recipe.arn
   infrastructure_arn = module.build_infrastructure.arn
   distribution_arn   = module.docker_host_distribution.arn
 
-  # Lineage tag. See the note in base_pipeline.
+  # Tag da linhagem. Ver a nota em base_pipeline.
   extra_tags = {
     "acme:cost-allocation:Application" = "docker-ubuntu-2604-x86"
   }
@@ -279,43 +271,42 @@ module "docker_host_pipeline" {
 }
 
 # ---------------------------------------------------------------------------
-# Lineage 3 - base image ARM64 (Graviton)
+# Linhagem 3 - imagem base ARM64 (Graviton)
 #
-# For t4g instances. It is NOT a variation of the others: its own lineage,
-# because the architecture is baked into the AMI and an amd64 image does not
-# run on t4g.
+# Para instancias t4g. NAO e variacao das outras: linhagem propria, porque a
+# arquitetura e assada na AMI e imagem amd64 nao roda em t4g.
 #
-# It starts from Canonical's public arm64 AMI, not from our amd64 base - you
-# cannot stack across different architectures.
+# Parte da AMI publica da Canonical arm64, nao da nossa base amd64 - nao da
+# para empilhar entre arquiteturas diferentes.
 #
-# It uses the ARM infrastructure configuration, because the build instance also
-# needs to be Graviton.
+# Usa a infrastructure configuration ARM, porque a instancia de build tambem
+# precisa ser Graviton.
 #
-# 30 GB disk, larger than the others' 20 GB.
+# Disco de 30 GB, maior que os 20 GB das outras.
 # ---------------------------------------------------------------------------
 
 module "base_arm64_recipe" {
   source = "./modules/recipe"
 
   name        = local.base_arm64_name
-  description = "Base ARM64 (Graviton) image for t4g instances"
+  description = "Imagem base ARM64 (Graviton) para instancias t4g"
 
-  # 1.0.1 - 10-19 cycle: acme-timezone 1.0.1 (AWS time source) and parent AMI
-  # updated to Canonical's 10-16 republication.
+  # 1.0.1 - ciclo de 19/10: mb-timezone 1.0.1 (fonte de tempo da AWS) e
+  # AMI-pai atualizada para a republicacao da Canonical de 16/10.
   recipe_version = "1.0.1"
 
   parent_image     = local.parent_ami_ubuntu_arm64
   root_volume_size = var.arm64_root_volume_size
 
-  # Same components as the amd64 base, on purpose: the fleet standard does not
-  # change with the architecture. Our own components are shell scripts, which
-  # run the same on both.
+  # Mesmos componentes da base amd64, e de proposito: o padrao da empresa nao
+  # muda com a arquitetura. Os componentes proprios sao scripts shell, que
+  # rodam igual nas duas.
   #
-  # The cleanup is always the LAST.
+  # O cleanup e sempre o ULTIMO.
   #
-  # NOTE on amazon-cloudwatch-agent-linux: the managed component has an arm64
-  # version, so it works. If the build fails on it, check in the log whether
-  # the message mentions architecture - that would be the first suspect.
+  # NOTA sobre o amazon-cloudwatch-agent-linux: o componente gerenciado tem
+  # versao arm64, entao funciona. Se a build falhar nele, conferir no log se a
+  # mensagem fala de arquitetura - seria o primeiro suspeito.
   component_arns = [
     "arn:aws:imagebuilder:${var.region}:aws:component/update-linux/x.x.x",
     module.component_timezone.arn,
@@ -328,16 +319,15 @@ module "base_arm64_distribution" {
   source = "./modules/distribution"
 
   name           = local.base_arm64_name
-  description    = "Distribution of the base ARM64 image in us-west-2"
+  description    = "Distribuicao da imagem base ARM64 na us-west-2"
   region         = var.region
   recipe_version = module.base_arm64_recipe.version
   parent_image   = module.base_arm64_recipe.parent_image
   common_tags    = var.common_tags
 
-  # Lineage tags, aligned with what was applied by hand.
-  # The Name already had the -arm64 suffix from the resource name; here it is
-  # explicit next to the Application, so the three lineages follow the same
-  # pattern.
+  # Tags da linhagem, alinhadas em 16/10 com o que foi aplicado a mao.
+  # O Name ja tinha o sufixo -arm64 pelo nome do recurso; aqui fica explicito
+  # junto da Application, para as tres linhagens seguirem o mesmo padrao.
   extra_ami_tags = {
     Name                               = local.base_arm64_name
     "acme:cost-allocation:Application" = "ubuntu-2604-arm64"
@@ -349,15 +339,15 @@ module "base_arm64_pipeline" {
   source = "./modules/pipeline"
 
   name        = local.base_arm64_name
-  description = "Base ARM64 (Graviton) image pipeline"
+  description = "Pipeline da imagem base ARM64 (Graviton)"
 
   recipe_arn = module.base_arm64_recipe.arn
 
-  # The ARM infrastructure configuration, not the shared one.
+  # A infrastructure configuration ARM, nao a compartilhada.
   infrastructure_arn = aws_imagebuilder_infrastructure_configuration.build_arm64.arn
   distribution_arn   = module.base_arm64_distribution.arn
 
-  # Lineage tag. See the note in base_pipeline.
+  # Tag da linhagem. Ver a nota em base_pipeline.
   extra_tags = {
     "acme:cost-allocation:Application" = "ubuntu-2604-arm64"
   }
@@ -366,51 +356,50 @@ module "base_arm64_pipeline" {
 }
 
 # ---------------------------------------------------------------------------
-# Lineage 4 - container host ARM64 (Graviton)
+# Linhagem 4 - host de container ARM64 (Graviton)
 #
-# CREATED ON 2026-10-19. It is the fourth and last lineage of the pattern: base
-# and container host, in x86 and arm64.
+# CRIADA EM 19/10/2026. E a quarta e ultima linhagem do padrao: base e host de
+# container, em x86 e arm64.
 #
-# WHY IT NEEDED TO EXIST: the integration worker (dataflow) is t4g and had
-# Docker installed BY HAND after launch, because there was no ARM container
-# host image. The practical consequence is that it runs WITHOUT the component's
-# daemon.json - without log rotation (max-size 10m, max-file 3) on a 30 GB
-# disk. A container that logs a lot fills the disk and brings the machine down,
-# with the symptom "the server stopped" and no obvious cause. It is the most
-# likely failure mode of that instance today.
+# POR QUE ELA PRECISAVA EXISTIR: a operationalflow e t4g e teve Docker
+# instalado A MAO depois do lancamento, porque nao havia imagem de host de
+# container ARM. A consequencia pratica e que ela roda SEM o daemon.json do
+# componente - sem rotacao de log (max-size 10m, max-file 3) num disco de
+# 30 GB. Container que loga muito enche o disco e derruba a maquina, com
+# sintoma "o servidor parou" sem causa obvia. E o modo de falha mais provavel
+# daquela instancia hoje.
 #
-# YOU CANNOT STACK ACROSS ARCHITECTURES: it starts from the arm64 base, not the
-# x86 one. The architecture is baked into the AMI.
+# NAO DA PARA EMPILHAR ENTRE ARQUITETURAS: parte da base arm64, nao da x86. A
+# arquitetura e assada na AMI.
 #
-# THE COMPONENTS ARE THE SAME as the x86 lineage, with no adaptation. Confirmed
-# by inspection: docker.yml builds the repository line with
-# "$(dpkg --print-architecture)", so it resolves arm64 on its own. Same with
-# timezone and cleanup - they are shell scripts. It had already been proven
-# when our own components ran on ARM with no change to the arm64 base.
+# OS COMPONENTES SAO OS MESMOS da linhagem x86, sem adaptacao. Confirmado em
+# 19/10 por inspecao: o docker.yml monta a linha do repositorio com
+# "$(dpkg --print-architecture)", entao resolve arm64 sozinho. Mesma coisa do
+# fuso e da limpeza - sao scripts shell. Ja havia sido comprovado em 15/10,
+# quando os componentes proprios rodaram em ARM sem mudanca na base arm64.
 # ---------------------------------------------------------------------------
 
 module "docker_host_arm64_recipe" {
   source = "./modules/recipe"
 
   name        = local.docker_arm64_name
-  description = "Container host ARM64 (Graviton): arm64 base image plus Docker Engine"
+  description = "Host de container ARM64 (Graviton): imagem base arm64 mais Docker Engine"
 
   recipe_version = "1.0.0"
 
-  # The ARM64 base, not the x86 one. Pinned in the tfvars on purpose.
+  # A base ARM64, nao a x86. Fixo no tfvars de proposito.
   parent_image     = var.base_arm64_ami_id
   root_volume_size = var.arm64_root_volume_size
 
-  # Does NOT repeat timezone nor the CloudWatch agent: they already came from
-  # the arm64 base.
+  # NAO repete timezone nem o agente do CloudWatch: ja vieram da base arm64.
   #
-  # update-linux goes in AGAIN, on purpose: it picks up the patches published
-  # between the base build and this build.
+  # O update-linux ENTRA de novo, de proposito: pega os patches publicados
+  # entre a build da base e esta build.
   #
-  # cleanup ALSO goes in again - the build instance is born from the base AMI
-  # and generates a NEW identity on the first boot (SSH host keys, machine-id,
-  # cloud-init state). Without running the cleanup again, that identity would
-  # go into the snapshot.
+  # O cleanup TAMBEM entra de novo - a instancia de build nasce da AMI base e
+  # gera identidade NOVA no primeiro boot (chaves de host SSH, machine-id,
+  # estado do cloud-init). Sem rodar a limpeza outra vez, essa identidade iria
+  # para o snapshot.
   component_arns = [
     "arn:aws:imagebuilder:${var.region}:aws:component/update-linux/x.x.x",
     module.component_docker.arn,
@@ -422,18 +411,18 @@ module "docker_host_arm64_distribution" {
   source = "./modules/distribution"
 
   name           = local.docker_arm64_name
-  description    = "Distribution of the container host ARM64 image in us-west-2"
+  description    = "Distribuicao da imagem de host de container ARM64 na us-west-2"
   region         = var.region
   recipe_version = module.docker_host_arm64_recipe.version
 
-  # ParentImage receives the AMI of our arm64 base, which makes the chain
-  # auditable: looking at the AMI, you can tell which base it was born from.
+  # ParentImage recebe a AMI da nossa base arm64, o que torna a cadeia
+  # auditavel: olhando a AMI, da para saber de qual base ela nasceu.
   parent_image = module.docker_host_arm64_recipe.parent_image
   common_tags  = var.common_tags
 
-  # The Application tag MUST match the key in retention_lineages of
-  # lifecycle.tf, otherwise the retention policy selects nothing - and it fails
-  # silently, with no error at all.
+  # A tag Application TEM de casar com a chave em retention_lineages do
+  # lifecycle.tf, senao a politica de retencao nao seleciona nada - e falha em
+  # silencio, sem erro nenhum.
   extra_ami_tags = {
     Name                               = local.docker_arm64_name
     "acme:cost-allocation:Application" = "docker-ubuntu-2604-arm64"
@@ -446,12 +435,12 @@ module "docker_host_arm64_pipeline" {
   source = "./modules/pipeline"
 
   name        = local.docker_arm64_name
-  description = "Container host ARM64 pipeline: arm64 base plus Docker"
+  description = "Pipeline do host de container ARM64: base arm64 mais Docker"
 
   recipe_arn = module.docker_host_arm64_recipe.arn
 
-  # The ARM infrastructure configuration, not the shared one: the build
-  # instance also needs to be Graviton.
+  # A infrastructure configuration ARM, nao a compartilhada: a instancia de
+  # build tambem precisa ser Graviton.
   infrastructure_arn = aws_imagebuilder_infrastructure_configuration.build_arm64.arn
   distribution_arn   = module.docker_host_arm64_distribution.arn
 

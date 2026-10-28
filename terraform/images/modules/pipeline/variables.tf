@@ -3,76 +3,74 @@
 # ---------------------------------------------------------------------------
 
 variable "name" {
-  description = "Pipeline name. By convention, the same as the image's."
+  description = "Nome do pipeline. Por convencao, igual ao da imagem."
   type        = string
 }
 
 variable "recipe_arn" {
-  description = "Recipe ARN"
+  description = "ARN da receita"
   type        = string
 }
 
 variable "infrastructure_arn" {
-  description = "ARN of the shared infrastructure configuration"
+  description = "ARN da infrastructure configuration compartilhada"
   type        = string
 }
 
 variable "distribution_arn" {
   description = <<-EOT
-    Distribution configuration ARN.
+    ARN da distribution configuration.
 
-    REQUIRED. Without it the AMI and the snapshot are born without the
-    standard tags and the image retention policy, which selects by tag, does
-    not find them.
+    OBRIGATORIO. Sem ela a AMI e o snapshot nascem sem as tags da norma e a
+    politica de retencao do A41, que seleciona por tag, nao os encontra.
   EOT
   type        = string
 }
 
 variable "description" {
-  description = "Pipeline description"
+  description = "Descricao do pipeline"
   type        = string
   default     = null
 }
 
 variable "status" {
-  description = "ENABLED or DISABLED"
+  description = "ENABLED ou DISABLED"
   type        = string
   default     = "ENABLED"
 
   validation {
     condition     = contains(["ENABLED", "DISABLED"], var.status)
-    error_message = "status must be ENABLED or DISABLED."
+    error_message = "status deve ser ENABLED ou DISABLED."
   }
 }
 
 variable "image_tests_enabled" {
-  description = "Run the test phase on an instance launched from the finished AMI"
+  description = "Rodar a fase de teste numa instancia lancada da AMI pronta"
   type        = bool
   default     = true
 }
 
 variable "image_tests_timeout" {
-  description = "Maximum time of the test phase, in minutes"
+  description = "Tempo maximo da fase de teste, em minutos"
   type        = number
   default     = 60
 }
 
 variable "extra_tags" {
   description = <<-EOT
-    Tags specific to this lineage, merged on top of the provider's
-    default_tags. A tag declared on the resource beats default_tags.
+    Tags especificas desta linhagem, mescladas por cima do default_tags do
+    provider. Tag declarada no recurso vence default_tags.
 
-    WHY IT EXISTS: without it the pipeline's nine tags all came from
-    default_tags, so the pipelines ended up with Application = golden-image and
-    were indistinguishable by tag. The AMI, the snapshot and the retention
-    policy already use the lineage value - the pipeline was the only layer
-    still generic.
+    POR QUE EXISTE: sem ela as nove tags do pipeline vinham todas do
+    default_tags, entao os tres pipelines ficavam com
+    Application = golden-image e eram indistinguiveis por tag. A AMI, o
+    snapshot e a politica de retencao ja usam o valor da linhagem desde
+    16/10 - o pipeline era a unica camada ainda generica.
 
-    DO NOT CONFUSE IT WITH RETENTION: a pipeline tag does NOT propagate to the
-    Image Builder image resource, which is what the retention policy
-    evaluates. Verified in practice. Here the tag serves for INVENTORY - a
-    pipeline is a definition, not a billed resource, so it does not appear on
-    the invoice.
+    NAO CONFUNDA COM RETENCAO: tag de pipeline NAO propaga para o recurso
+    image do Image Builder, que e o que a politica de retencao avalia.
+    Verificado em 15 e 16/10. Aqui a tag serve para INVENTARIO - pipeline e
+    definicao, nao recurso cobrado, entao nao aparece na fatura.
   EOT
   type        = map(string)
   default     = {}
@@ -80,12 +78,12 @@ variable "extra_tags" {
 
 variable "schedule" {
   description = <<-EOT
-    Build schedule. null = manual trigger, which is the default today.
+    Agendamento da build. null = disparo manual, que e o padrao hoje.
 
-    Do NOT turn it on before the retention policy works: each monthly build
-    leaves a 20 GB snapshot that nobody deletes.
+    NAO ligue antes de a politica de retencao funcionar: cada build mensal
+    deixa um snapshot de 20 GB que ninguem apaga.
 
-    Example:
+    Exemplo:
       schedule = {
         expression      = "cron(0 3 1 * ? *)"
         start_condition = "EXPRESSION_MATCH_AND_DEPENDENCY_UPDATES_AVAILABLE"

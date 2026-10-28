@@ -1,70 +1,68 @@
 # ---------------------------------------------------------------------------
 # images/outputs.tf
 #
-# A build is an ACTION, not state: there is no Terraform resource to run the
-# pipeline. These outputs are the ARNs that the CLI and the CI pipeline use to
-# trigger it.
+# Build e ACAO, nao estado: nao ha recurso no Terraform para executar o
+# pipeline. Estes outputs sao os ARNs que a CLI e a esteira usam para disparar.
 # ---------------------------------------------------------------------------
 
 output "base_pipeline_arn" {
-  description = "Base image pipeline. Trigger it with start-image-pipeline-execution."
+  description = "Pipeline da imagem base. Dispare com start-image-pipeline-execution."
   value       = module.base_pipeline.arn
 }
 
 output "docker_host_pipeline_arn" {
-  description = "Container host pipeline. Requires base_ami_id to be up to date."
+  description = "Pipeline do host de container. Precisa que a base_ami_id esteja atualizada."
   value       = module.docker_host_pipeline.arn
 }
 
 output "base_arm64_pipeline_arn" {
-  description = "Base ARM64 (Graviton) image pipeline, for t4g instances"
+  description = "Pipeline da imagem base ARM64 (Graviton), para instancias t4g"
   value       = module.base_arm64_pipeline.arn
 }
 
 output "parent_ami_ubuntu_em_uso" {
-  description = "amd64 parent AMI the recipes actually use (pinned in the tfvars)"
+  description = "AMI-pai amd64 que as receitas usam de fato (fixa no tfvars)"
   value       = local.parent_ami_ubuntu
 }
 
 output "parent_ami_ubuntu_arm64_em_uso" {
-  description = "arm64 parent AMI the recipe actually uses (pinned in the tfvars)"
+  description = "AMI-pai arm64 que a receita usa de fato (fixa no tfvars)"
   value       = local.parent_ami_ubuntu_arm64
 }
 
-# The two outputs below are INFORMATIONAL: they tell which AMI Canonical
-# publishes today. Compare them with the "em_uso" ones above to know whether an
-# update is available.
+# Os dois outputs abaixo sao INFORMATIVOS: dizem qual AMI a Canonical publica
+# hoje. Compare com as "em_uso" acima para saber se ha atualizacao disponivel.
 #
-# If they diverge, updating is a DELIBERATE ACT: changing base_parent_ami_* in
-# the tfvars REPLACES the recipe, so bump the recipe_version along with it and
-# delete old images that block the removal.
+# Se divergirem, atualizar e ATO DELIBERADO: trocar base_parent_ami_* no
+# tfvars SUBSTITUI a receita, entao suba o recipe_version junto e apague
+# imagens antigas que travem a remocao.
 #
-# insecure_value instead of value: aws_ssm_parameter marks "value" as sensitive
-# by default, because it does not know whether the parameter holds a secret.
-# Exporting it in an output would require sensitive = true. Since a public
-# Canonical AMI ID is not a secret, the correct attribute is insecure_value.
+# insecure_value em vez de value: o aws_ssm_parameter marca "value" como
+# sensivel por padrao, porque nao sabe se o parametro guarda segredo. Exportar
+# em output exigiria sensitive = true. Como um ID de AMI publica da Canonical
+# nao e segredo, o atributo correto e insecure_value.
 output "parent_ami_ubuntu_disponivel" {
-  description = "amd64 AMI that Canonical publishes NOW. Compare with the one in use."
+  description = "AMI amd64 que a Canonical publica AGORA. Compare com a em uso."
   value       = data.aws_ssm_parameter.ubuntu.insecure_value
 }
 
 output "parent_ami_ubuntu_arm64_disponivel" {
-  description = "arm64 AMI that Canonical publishes NOW. Compare with the one in use."
+  description = "AMI arm64 que a Canonical publica AGORA. Compare com a em uso."
   value       = data.aws_ssm_parameter.ubuntu_arm64.insecure_value
 }
 
 output "base_ami_in_use_as_docker_parent" {
   description = <<-EOT
-    AMI of the base image that the Docker lineage uses as parent.
+    AMI da imagem base que a linhagem do Docker usa como pai.
 
-    Check after every new base build: this value does NOT follow along on its
-    own, on purpose. Updating is a deliberate act, because it changes the
-    container host recipe and requires bumping its version.
+    Conferir depois de cada build nova da base: este valor NAO acompanha
+    sozinho, de proposito. Atualizar e ato deliberado, porque muda a receita
+    do host de container e exige subir a versao dela.
   EOT
   value       = var.base_ami_id
 }
 
 output "build_security_group_id" {
-  description = "Security group of the temporary build instance"
+  description = "Security group da instancia temporaria de build"
   value       = module.build_infrastructure.security_group_id
 }
