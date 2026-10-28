@@ -395,6 +395,7 @@ caught three real mistakes. This was the case where it misfired.
 | [`terraform/network-peering/`](terraform/network-peering) | cross-account peering and the wrong-CIDR episode |
 | [`tools/flowlog/`](tools/flowlog) | traffic forensics with duckdb, without standing up Athena |
 | [`docs/network-built-in-console.md`](docs/network-built-in-console.md) | the half of the account that is **not** in Terraform, and why |
+| [`docs/terraform-conventions.md`](docs/terraform-conventions.md) | style and conventions: file layout, `for_each` over maps, secure defaults, tagging |
 
 The comments in the `.tf` files are long on purpose. They explain *why* the
 code is the way it is — which trap the argument avoids, which apply failed

@@ -350,6 +350,7 @@ determinística. Validação que falha sozinha não é detector, é ruído.
 | [`terraform/network-peering/`](terraform/network-peering) | peering entre contas e o episódio do CIDR errado |
 | [`tools/flowlog/`](tools/flowlog) | diagnóstico de tráfego com duckdb, sem montar Athena |
 | [`docs/network-built-in-console.md`](docs/network-built-in-console.md) | a metade da conta que **não** está em Terraform, e por quê |
+| [`docs/terraform-conventions.md`](docs/terraform-conventions.md) | estilo e convenções: organização de arquivos, `for_each` sobre mapas, defaults seguros, tags |
 
 > **Nota de idioma.** O repositório é em inglês: comentários, descriptions e os
 > READMEs de diretório. Este arquivo é a tradução da página inicial — é o único

@@ -1,14 +1,10 @@
----
-inclusion: fileMatch
-fileMatchPattern: '**/*.{tf,tfvars}'
----
+# Convenções Terraform
 
-# Convenções Terraform (base: win-app-site)
-
-Guia de estilo e boas práticas para o código Terraform deste repositório. Combina as
-recomendações oficiais da HashiCorp (Style Guide / Module Development) com os padrões já
-estabelecidos na instância de referência `instances/win-app-site`. Ao criar ou editar
-`.tf`/`.tfvars`, siga estas convenções e espelhe os padrões dessa instância.
+Guia de estilo e boas práticas do código Terraform deste repositório. Combina as
+recomendações oficiais da HashiCorp (Style Guide / Module Development) com os padrões
+adotados nos stacks deste projeto — em particular `terraform/instances/win-app-site`,
+que serve de referência de organização. Ao criar ou editar `.tf`/`.tfvars`, siga estas
+convenções.
 
 ## Princípios gerais (HashiCorp)
 
@@ -30,7 +26,7 @@ estabelecidos na instância de referência `instances/win-app-site`. Ao criar ou
 
 ## Organização de arquivos
 
-Separe por responsabilidade, um arquivo por domínio (padrão desta instância):
+Separe por responsabilidade, um arquivo por domínio:
 
 | Arquivo | Conteúdo |
 |---------|----------|
@@ -44,7 +40,7 @@ Separe por responsabilidade, um arquivo por domínio (padrão desta instância):
 | `outputs.tf` | saídas do módulo/stack |
 | `README.md` | arquitetura, estrutura, uso e pendências |
 
-Cabeçalhos de seção usam o padrão de banner já adotado:
+Cabeçalhos de seção usam o padrão de banner adotado no repositório:
 
 ```hcl
 ##################################################################
@@ -56,10 +52,10 @@ Cabeçalhos de seção usam o padrão de banner já adotado:
 
 - **Toda variável tem `type` e `description`.** A descrição explica o propósito em PT-BR.
 - **Modele entradas estruturadas como `object()`** e agrupe coleções em `map(object())` chaveado
-  por uma chave de negócio estável (nesta instância, o `hostname`). Mapas são preferíveis a listas
-  para `for_each` porque dão endereços de state estáveis.
+  por uma chave de negócio estável (nos stacks de instância, o `hostname`). Mapas são preferíveis
+  a listas para `for_each` porque dão endereços de state estáveis.
 - **Use `optional(tipo, default)`** para campos com padrão, de modo que o resource consuma
-  `each.value.*` diretamente, sem `merge` com defaults externos. Exemplo real:
+  `each.value.*` diretamente, sem `merge` com defaults externos. Exemplo:
 
   ```hcl
   instance_type    = optional(string, "t3a.micro")
@@ -68,7 +64,7 @@ Cabeçalhos de seção usam o padrão de banner já adotado:
   data_disks       = optional(list(object({ ... })), [])
   ```
 
-- **Valide entradas** com blocos `validation` e mensagens de erro claras (em PT-BR). Padrões já
+- **Valide entradas** com blocos `validation` e mensagens de erro claras (em PT-BR). Padrões
   usados: regex de região AWS, regex de nome de bucket S3, chave do mapa só com `[A-Z0-9]`,
   tamanho de disco `> 0`. Prefira `alltrue([for ...])` para validar coleções.
 - Defina `default` apenas quando o valor fizer sentido fora do `.tfvars` (ex.: `s3_bucket_name`).
@@ -77,9 +73,9 @@ Cabeçalhos de seção usam o padrão de banner já adotado:
 
 - **Prefira `for_each` a `count`.** `for_each` sobre um mapa dá endereços de state estáveis e
   evita recriação em cascata ao adicionar/remover elementos. Todos os recursos por servidor
-  nesta instância usam `for_each = var.servers`.
+  nos stacks de instância usam `for_each = var.servers`.
 - **Achate relações N:N em `locals`** quando precisar de `for_each` sobre o produto de duas
-  coleções. Padrão desta instância (servidor × disco), com chave composta única:
+  coleções. Padrão usado (servidor × disco), com chave composta única:
 
   ```hcl
   locals {
