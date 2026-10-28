@@ -21,6 +21,17 @@
 # anterior que dizia o contrario estava errada.
 # ---------------------------------------------------------------------------
 
+terraform {
+  required_version = ">= 1.10"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
 resource "aws_imagebuilder_distribution_configuration" "this" {
   name        = var.name
   description = var.description

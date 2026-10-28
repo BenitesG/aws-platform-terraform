@@ -12,6 +12,17 @@
 # "definir o pipeline" com "executar o pipeline". A execucao fica na esteira.
 # ---------------------------------------------------------------------------
 
+terraform {
+  required_version = ">= 1.10"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
 resource "aws_imagebuilder_image_pipeline" "this" {
   name        = var.name
   description = var.description

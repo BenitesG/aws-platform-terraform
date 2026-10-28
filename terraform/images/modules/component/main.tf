@@ -15,6 +15,17 @@
 #   ./awstoe validate --documents components/docker.yml
 # ---------------------------------------------------------------------------
 
+terraform {
+  required_version = ">= 1.10"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
 resource "aws_imagebuilder_component" "this" {
   name        = var.name
   platform    = var.platform

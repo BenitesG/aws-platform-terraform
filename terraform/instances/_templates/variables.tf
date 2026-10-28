@@ -60,6 +60,7 @@ variable "erp_host_cidr" {
   }
 }
 
+# tflint-ignore: terraform_unused_declarations
 variable "plc_host_cidr" {
   description = "Host do Studio 5000 em /32 (infra de terceiro). Origem/destino das regras de protocolo. Vazio = sem protocolo industrial."
   type        = string
