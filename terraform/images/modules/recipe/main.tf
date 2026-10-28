@@ -6,6 +6,17 @@
 # Se voce pensa em Docker, a imagem-pai e o FROM e os componentes sao os RUN.
 # ---------------------------------------------------------------------------
 
+terraform {
+  required_version = ">= 1.10"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
 resource "aws_imagebuilder_image_recipe" "this" {
   name         = var.name
   version      = var.recipe_version

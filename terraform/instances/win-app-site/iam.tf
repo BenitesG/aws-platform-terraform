@@ -44,7 +44,7 @@ data "aws_iam_policy_document" "s3" {
     condition {
       test     = "StringLike"
       variable = "s3:prefix"
-      values   = ["shared/*", "shared", "${each.key}/*", "${each.key}"]
+      values   = ["shared/*", "shared", "${each.key}/*", each.key]
     }
   }
 
